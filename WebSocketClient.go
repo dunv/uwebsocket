@@ -5,7 +5,6 @@ package uwebsocket
 
 import (
 	"bytes"
-	"net/http"
 	"time"
 
 	"github.com/dunv/ulog"
@@ -47,7 +46,7 @@ type WebSocketClient struct {
 	// Buffered channel of outbound messages.
 	send chan []byte
 
-	Attributes map[string]interface{}
+	attributes ClientAttributes
 }
 
 // readPump pumps messages from the websocket connection to the hub.
@@ -82,8 +81,10 @@ func (c *WebSocketClient) readPump() {
 			break
 		}
 		message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
-		ulog.Warnf("A wsClient sent a message (%s), this is currently not supported. Doing nothing...", message)
-		// c.hub.Broadcast <- message
+		c.hub.incomingMessages <- ClientMessage{
+			Client:  c.attributes,
+			Message: message,
+		}
 	}
 }
 
@@ -150,29 +151,4 @@ func (c *WebSocketClient) writePump() {
 			}
 		}
 	}
-}
-
-// serveWs handles websocket requests from the peer.
-func ServeWs(hub *WebSocketHub, attributes map[string]interface{}, w http.ResponseWriter, r *http.Request) {
-	upgrader.CheckOrigin = func(r *http.Request) bool {
-		return true
-	}
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		ulog.Errorf("Could not Upgrade connection (%s)", err)
-		return
-	}
-	client := &WebSocketClient{
-		hub:        hub,
-		conn:       conn,
-		send:       make(chan []byte, 256),
-		Attributes: attributes,
-	}
-	client.hub.register <- client
-
-	// Allow collection of memory referenced by the caller by doing all work in
-	// new goroutines.
-	go client.writePump()
-	go client.readPump()
-	ulog.Infof("WebsocketConnection opened (%s)", attributes)
 }
