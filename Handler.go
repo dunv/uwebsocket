@@ -8,10 +8,14 @@ import (
 
 type Handler struct {
 	UhttpHandler     uhttp.Handler
-	ClientAttributes ClientAttributes
-	OnConnect        *func(r *http.Request)
+	ClientAttributes *func(hub *WebSocketHub, r *http.Request) (ClientAttributes, error)
+	OnConnect        *func(hub *WebSocketHub, clientAttributes ClientAttributes, r *http.Request)
 }
 
-func OnConnect(onConnectFunc func(r *http.Request)) *func(r *http.Request) {
+func ClientAttributesFunc(clientAttributesFunc func(hub *WebSocketHub, r *http.Request) (ClientAttributes, error)) *func(hub *WebSocketHub, r *http.Request) (ClientAttributes, error) {
+	return &clientAttributesFunc
+}
+
+func OnConnect(onConnectFunc func(hub *WebSocketHub, clientAttributes ClientAttributes, r *http.Request)) *func(hub *WebSocketHub, clientAttributes ClientAttributes, r *http.Request) {
 	return &onConnectFunc
 }

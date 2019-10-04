@@ -4,8 +4,10 @@
 package uwebsocket
 
 import (
+	"fmt"
 	"net/http"
 
+	"github.com/dunv/uhttp"
 	"github.com/dunv/ulog"
 )
 
@@ -71,9 +73,22 @@ func (h *WebSocketHub) Run() {
 func (h *WebSocketHub) Handle(pattern string, handler *Handler) {
 	if handler != nil {
 		http.HandleFunc(pattern, handler.UhttpHandler.WsReady()(func(w http.ResponseWriter, r *http.Request) {
-			ulog.LogIfError(UpgradeConnection(h, handler.ClientAttributes, w, r))
+			var attributes ClientAttributes
+			var err error
+			if handler.ClientAttributes != nil {
+				attributes, err = (*handler.ClientAttributes)(h, r)
+				if err != nil {
+					uhttp.RenderError(w, r, fmt.Errorf("could not get required attributes (%s)", err))
+					return
+				}
+			}
+			err = UpgradeConnection(h, attributes, w, r)
+			if err != nil {
+				uhttp.RenderError(w, r, fmt.Errorf("could not upgrade connection (%s)", err))
+			}
+
 			if handler.OnConnect != nil {
-				(*handler.OnConnect)(r)
+				(*handler.OnConnect)(h, attributes, r)
 			}
 		}))
 	} else {
