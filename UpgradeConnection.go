@@ -6,7 +6,13 @@ import (
 	"strings"
 )
 
-func UpgradeConnection(hub *WebSocketHub, clientAttributes ClientAttributes, w http.ResponseWriter, r *http.Request) error {
+func UpgradeConnection(
+	hub *WebSocketHub,
+	handler *Handler,
+	clientAttributes ClientAttributes,
+	w http.ResponseWriter,
+	r *http.Request,
+) error {
 	upgrader.CheckOrigin = func(r *http.Request) bool {
 		if config.CORS == nil {
 			return true
@@ -33,6 +39,7 @@ func UpgradeConnection(hub *WebSocketHub, clientAttributes ClientAttributes, w h
 		conn:       conn,
 		send:       make(chan []byte, 256),
 		attributes: clientAttributes,
+		handler:    handler,
 	}
 	client.hub.register <- client
 

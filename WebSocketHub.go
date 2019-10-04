@@ -81,7 +81,7 @@ func (h *WebSocketHub) Handle(pattern string, handler *Handler) {
 					return
 				}
 			}
-			err = UpgradeConnection(h, attributes, w, r)
+			err = UpgradeConnection(h, handler, attributes, w, r)
 			if err != nil {
 				uhttp.RenderError(w, r, fmt.Errorf("could not upgrade connection (%s)", err))
 			}
@@ -92,7 +92,7 @@ func (h *WebSocketHub) Handle(pattern string, handler *Handler) {
 		}))
 	} else {
 		http.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-			config.CustomLog.LogIfError(UpgradeConnection(h, nil, w, r))
+			config.CustomLog.LogIfError(UpgradeConnection(h, nil, nil, w, r))
 		})
 	}
 	config.CustomLog.Infof("Registered WS at %s", pattern)
