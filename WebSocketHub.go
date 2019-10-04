@@ -8,7 +8,6 @@ import (
 	"net/http"
 
 	"github.com/dunv/uhttp"
-	"github.com/dunv/ulog"
 )
 
 type WebSocketHub struct {
@@ -93,7 +92,8 @@ func (h *WebSocketHub) Handle(pattern string, handler *Handler) {
 		}))
 	} else {
 		http.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-			ulog.LogIfError(UpgradeConnection(h, nil, w, r))
+			config.CustomLog.LogIfError(UpgradeConnection(h, nil, w, r))
 		})
 	}
+	config.CustomLog.Infof("Registered WS at %s", pattern)
 }

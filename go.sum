@@ -2,8 +2,11 @@ github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSs
 github.com/dgrijalva/jwt-go v3.2.0+incompatible/go.mod h1:E3ru+11k8xSBh+hMPgOLZmtrrCbhqsmaPHjLKYnJCaQ=
 github.com/dunv/uauth v1.0.38/go.mod h1:aYVw/fn0J8/jVtwygctmECN4OZVhokbKXSQyots5NVE=
 github.com/dunv/uauth v1.0.40/go.mod h1:YHxipwshYMt/cJKISA1hTn+6aSiWIZDF3CnB7AGnMQk=
+github.com/dunv/uauth v1.0.41/go.mod h1:YHxipwshYMt/cJKISA1hTn+6aSiWIZDF3CnB7AGnMQk=
 github.com/dunv/uhelpers v1.0.4 h1:EdxjjhT0n9CfpqQuA4V0A+GAxmFhbtNg9CB8EsHoCH8=
 github.com/dunv/uhelpers v1.0.4/go.mod h1:e01Y+aVv/p2Te+5P5pZb6GiaOBce9jxDXE7bpJaBez4=
+github.com/dunv/uhelpers v1.0.5 h1:zwaMGw1CjTg0tKW3fTBzurIZK353nLxaLUbe/4XuDhM=
+github.com/dunv/uhelpers v1.0.5/go.mod h1:e01Y+aVv/p2Te+5P5pZb6GiaOBce9jxDXE7bpJaBez4=
 github.com/dunv/uhttp v1.0.29/go.mod h1:N6QtEMbjuP8ac0+GbHs/UPwDL8+aASN6fXk166g80wU=
 github.com/dunv/uhttp v1.0.32 h1:DdVDOgTPqbylA/jzJSpsy8lsBkj7XLtfWbZRUIS11Bw=
 github.com/dunv/uhttp v1.0.32/go.mod h1:N6QtEMbjuP8ac0+GbHs/UPwDL8+aASN6fXk166g80wU=

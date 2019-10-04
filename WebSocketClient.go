@@ -7,8 +7,6 @@ import (
 	"bytes"
 	"time"
 
-	"github.com/dunv/ulog"
-
 	"github.com/gorilla/websocket"
 )
 
@@ -62,12 +60,12 @@ func (c *WebSocketClient) readPump() {
 	c.conn.SetReadLimit(maxMessageSize)
 	err := c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	if err != nil {
-		ulog.Errorf("Could not SetReadDeadline on connection (%s)", err)
+		config.CustomLog.Errorf("Could not SetReadDeadline on connection (%s)", err)
 	}
 	c.conn.SetPongHandler(func(string) error {
 		err = c.conn.SetReadDeadline(time.Now().Add(pongWait))
 		if err != nil {
-			ulog.Errorf("Could not SetReadDeadline on connection (%s)", err)
+			config.CustomLog.Errorf("Could not SetReadDeadline on connection (%s)", err)
 		}
 		return nil
 	})
@@ -76,7 +74,7 @@ func (c *WebSocketClient) readPump() {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				ulog.Infof("error: %v", err)
+				config.CustomLog.Infof("error: %v", err)
 			}
 			break
 		}
@@ -104,14 +102,14 @@ func (c *WebSocketClient) writePump() {
 		case message, ok := <-c.send:
 			err := c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err != nil {
-				ulog.Errorf("Could not SetWriteDeadline on connection (%s)", err)
+				config.CustomLog.Errorf("Could not SetWriteDeadline on connection (%s)", err)
 			}
 
 			if !ok {
 				// The hub closed the channel.
 				err = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				if err != nil {
-					ulog.Infof("WebsocketConnection closed (%s)", err)
+					config.CustomLog.Infof("WebsocketConnection closed (%s)", err)
 				}
 				return
 			}
@@ -122,7 +120,7 @@ func (c *WebSocketClient) writePump() {
 			}
 			_, err = w.Write(message)
 			if err != nil {
-				ulog.Errorf("Could not Write on writer (%s)", err)
+				config.CustomLog.Errorf("Could not Write on writer (%s)", err)
 			}
 
 			// Add queued chat messages to the current websocket message.
@@ -130,11 +128,11 @@ func (c *WebSocketClient) writePump() {
 			for i := 0; i < n; i++ {
 				_, err := w.Write(newline)
 				if err != nil {
-					ulog.Errorf("Could not Write on writer (%s)", err)
+					config.CustomLog.Errorf("Could not Write on writer (%s)", err)
 				}
 				_, err = w.Write(<-c.send)
 				if err != nil {
-					ulog.Errorf("Could not Write on writer (%s)", err)
+					config.CustomLog.Errorf("Could not Write on writer (%s)", err)
 				}
 			}
 
@@ -144,7 +142,7 @@ func (c *WebSocketClient) writePump() {
 		case <-ticker.C:
 			err := c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err != nil {
-				ulog.Errorf("Could not SetWriteDeadline on connection (%s)", err)
+				config.CustomLog.Errorf("Could not SetWriteDeadline on connection (%s)", err)
 			}
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
