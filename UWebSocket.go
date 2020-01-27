@@ -1,7 +1,6 @@
 package uwebsocket
 
 import (
-	"github.com/dunv/uhttp/logging"
 	"github.com/dunv/ulog"
 )
 
@@ -25,7 +24,7 @@ func SetConfig(_config Config) {
 
 	if _config.CustomLog != nil {
 		config.CustomLog = _config.CustomLog
-		logging.Logger = _config.CustomLog
+		// uhttp.Logger = _config.CustomLog
 	}
 
 	if _config.CORS != nil {
