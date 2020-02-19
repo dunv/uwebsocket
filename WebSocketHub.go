@@ -6,6 +6,7 @@ package uwebsocket
 import (
 	"fmt"
 	"net/http"
+	"sync"
 
 	"github.com/dunv/uhttp"
 )
@@ -18,6 +19,9 @@ type WebSocketHub struct {
 
 	// if the user wants to receive messages, this channel needs to be not nil
 	messageHandler *chan ClientMessage
+
+	// lock list
+	clientLock *sync.Mutex
 }
 
 func NewWebSocketHub(messagHandler *chan ClientMessage) *WebSocketHub {
@@ -27,6 +31,7 @@ func NewWebSocketHub(messagHandler *chan ClientMessage) *WebSocketHub {
 		clients:          make(map[*WebSocketClient]bool),
 		incomingMessages: make(chan ClientMessage),
 		messageHandler:   messagHandler,
+		clientLock:       &sync.Mutex{},
 	}
 }
 
@@ -39,7 +44,10 @@ func CreateHubAndRunInBackground(messagHandler *chan ClientMessage) *WebSocketHu
 }
 
 func (h *WebSocketHub) SendWithFilter(filterFunc func(attrs ClientAttributes) bool, message []byte) error {
-	for client, _ := range h.clients {
+	h.clientLock.Lock()
+	defer h.clientLock.Unlock()
+
+	for client := range h.clients {
 		if filterFunc(client.attributes) {
 			select {
 			case client.send <- message:
@@ -55,12 +63,16 @@ func (h *WebSocketHub) Run() {
 	for {
 		select {
 		case client := <-h.register:
+			h.clientLock.Lock()
 			h.clients[client] = true
+			h.clientLock.Unlock()
 		case client := <-h.unregister:
+			h.clientLock.Lock()
 			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
 				close(client.send)
 			}
+			h.clientLock.Unlock()
 		case clientMessage := <-h.incomingMessages:
 			if h.messageHandler != nil {
 				*h.messageHandler <- clientMessage
