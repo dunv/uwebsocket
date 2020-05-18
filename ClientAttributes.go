@@ -1,6 +1,6 @@
 package uwebsocket
 
-type ClientAttributes interface{}
+type ClientAttributes map[string]interface{}
 
 type ClientMessage struct {
 	Message []byte

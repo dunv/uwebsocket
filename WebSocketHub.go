@@ -20,23 +20,26 @@ type WebSocketHub struct {
 	// if the user wants to receive messages, this channel needs to be not nil
 	messageHandler *chan ClientMessage
 
+	u *uhttp.UHTTP
+
 	// lock list
 	clientLock *sync.Mutex
 }
 
-func NewWebSocketHub(messagHandler *chan ClientMessage) *WebSocketHub {
+func NewWebSocketHub(u *uhttp.UHTTP, messagHandler *chan ClientMessage) *WebSocketHub {
 	return &WebSocketHub{
 		register:         make(chan *WebSocketClient),
 		unregister:       make(chan *WebSocketClient),
 		clients:          make(map[*WebSocketClient]bool),
 		incomingMessages: make(chan ClientMessage),
 		messageHandler:   messagHandler,
+		u:                u,
 		clientLock:       &sync.Mutex{},
 	}
 }
 
-func CreateHubAndRunInBackground(messagHandler *chan ClientMessage) *WebSocketHub {
-	hub := NewWebSocketHub(messagHandler)
+func CreateHubAndRunInBackground(u *uhttp.UHTTP, messageHandler *chan ClientMessage) *WebSocketHub {
+	hub := NewWebSocketHub(u, messageHandler)
 	go func() {
 		hub.Run()
 	}()
@@ -82,20 +85,22 @@ func (h *WebSocketHub) Run() {
 }
 
 func (h *WebSocketHub) Handle(pattern string, handler *Handler) {
+	// Add all middlewares, if handler is defined
 	if handler != nil {
-		http.HandleFunc(pattern, handler.UhttpHandler.WsReady()(func(w http.ResponseWriter, r *http.Request) {
+		http.Handle(pattern, handler.UhttpHandler.WsReady(h.u)(func(w http.ResponseWriter, r *http.Request) {
 			var attributes ClientAttributes
 			var err error
 			if handler.ClientAttributes != nil {
 				attributes, err = (*handler.ClientAttributes)(h, r)
 				if err != nil {
-					uhttp.RenderError(w, r, fmt.Errorf("could not get required attributes (%s)", err))
+					h.u.RenderError(w, r, fmt.Errorf("could not get required attributes (%s)", err))
 					return
 				}
 			}
 			err = UpgradeConnection(h, handler, attributes, w, r)
 			if err != nil {
-				uhttp.RenderError(w, r, fmt.Errorf("could not upgrade connection (%s)", err))
+				h.u.RenderError(w, r, fmt.Errorf("could not upgrade connection (%s)", err))
+				return
 			}
 
 			if handler.OnConnect != nil {
