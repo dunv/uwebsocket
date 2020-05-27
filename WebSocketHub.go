@@ -87,7 +87,7 @@ func (h *WebSocketHub) Run() {
 func (h *WebSocketHub) Handle(pattern string, handler *Handler) {
 	// Add all middlewares, if handler is defined
 	if handler != nil {
-		http.Handle(pattern, handler.UhttpHandler.WsReady(h.u)(func(w http.ResponseWriter, r *http.Request) {
+		h.u.ServeMux().Handle(pattern, handler.UhttpHandler.WsReady(h.u)(func(w http.ResponseWriter, r *http.Request) {
 			var attributes ClientAttributes
 			var err error
 			if handler.ClientAttributes != nil {
@@ -108,7 +108,7 @@ func (h *WebSocketHub) Handle(pattern string, handler *Handler) {
 			}
 		}))
 	} else {
-		http.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		h.u.ServeMux().HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 			config.CustomLog.LogIfError(UpgradeConnection(h, nil, nil, w, r))
 		})
 	}

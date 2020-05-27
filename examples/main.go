@@ -16,7 +16,10 @@ func main() {
 	// can be tested with
 	// websocat ws://localhost:8080/ws
 
-	u := uhttp.NewUHTTP()
+	u := uhttp.NewUHTTP(
+		uhttp.WithAddress("0.0.0.0:8080"),
+	)
+
 	inboundMessages := make(chan ws.ClientMessage)
 	wsHub := ws.CreateHubAndRunInBackground(u, &inboundMessages)
 
@@ -32,7 +35,7 @@ func main() {
 	}()
 
 	wsHub.Handle("/ws", WsHandler)
-	ulog.Fatal(http.ListenAndServe("0.0.0.0:8080", nil)) // need to investigate, why does this not work with localhost
+	ulog.Fatal(u.ListenAndServe()) // need to investigate, why does this not work with localhost
 }
 
 var WsHandler = &ws.Handler{
