@@ -94,6 +94,13 @@ func (c *WebSocketClient) readPump() {
 			break
 		}
 		message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
+
+		// support client side ping-pong via text-message
+		if bytes.Equal(message, []byte("PING")) {
+			c.send <- []byte(`PONG`)
+			continue
+		}
+
 		c.hub.incomingMessages <- ClientMessage{
 			Client:  c.attributes,
 			Message: message,
