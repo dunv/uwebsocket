@@ -9,6 +9,7 @@ import (
 func UpgradeConnection(
 	hub *WebSocketHub,
 	handler *Handler,
+	clientGuid string,
 	clientAttributes ClientAttributes,
 	w http.ResponseWriter,
 	r *http.Request,
@@ -35,11 +36,13 @@ func UpgradeConnection(
 		return fmt.Errorf("Could not Upgrade connection (%s)", err)
 	}
 	client := &WebSocketClient{
-		hub:        hub,
-		conn:       conn,
-		send:       make(chan []byte, 256),
-		attributes: clientAttributes,
-		handler:    handler,
+		hub:            hub,
+		conn:           conn,
+		send:           make(chan []byte, 256),
+		clientGuid:     clientGuid,
+		attributes:     clientAttributes,
+		connectRequest: r,
+		handler:        handler,
 	}
 	client.hub.register <- client
 

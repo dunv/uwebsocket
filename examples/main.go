@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/dunv/uhelpers"
 	"github.com/dunv/uhttp"
 	"github.com/dunv/ulog"
 	ws "github.com/dunv/uwebsocket"
 	"github.com/google/uuid"
+	"golang.org/x/net/context"
 )
 
 func main() {
@@ -21,7 +23,9 @@ func main() {
 	)
 
 	inboundMessages := make(chan ws.ClientMessage)
-	wsHub := ws.CreateHubAndRunInBackground(u, &inboundMessages)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	wsHub := ws.CreateHubAndRunInBackground(u, &inboundMessages, ctx)
 
 	go func() {
 		for inboundMessage := range inboundMessages {
@@ -40,13 +44,16 @@ func main() {
 
 var WsHandler = &ws.Handler{
 	ClientAttributes: ws.ClientAttributesFunc(func(hub *ws.WebSocketHub, r *http.Request) (ws.ClientAttributes, error) {
-		clientAttributeMap := map[string]interface{}{"clientGuid": uuid.New().String()}
+		clientAttributeMap := map[string]interface{}{"clientGuid": uhelpers.PtrToString(uuid.New().String())}
 		return clientAttributeMap, nil
 	}),
-	OnConnect: ws.OnConnect(func(hub *ws.WebSocketHub, clientAttributes ws.ClientAttributes, r *http.Request) {
-		ulog.Infof("Client connected %v", clientAttributes["clientGuid"])
+	WelcomeMessage: ws.WelcomeMessage(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes ws.ClientAttributes, r *http.Request) ([]byte, error) {
+		return []byte(fmt.Sprintf(`{"msg": "Welcome, %s"}`, clientGuid)), nil
 	}),
-	OnDisconnect: ws.OnDisconnect(func(hub *ws.WebSocketHub, clientAttributes ws.ClientAttributes, err error) {
-		ulog.Infof("Client disonnected %v", clientAttributes["clientGuid"])
+	OnConnect: ws.OnConnect(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes ws.ClientAttributes, r *http.Request) {
+		ulog.Infof("Client connected %v", clientGuid)
+	}),
+	OnDisconnect: ws.OnDisconnect(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes ws.ClientAttributes, err error) {
+		ulog.Infof("Client disonnected %v", clientGuid)
 	}),
 }

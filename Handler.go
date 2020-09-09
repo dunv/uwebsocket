@@ -9,8 +9,9 @@ import (
 type Handler struct {
 	UhttpHandler     uhttp.Handler
 	ClientAttributes *func(hub *WebSocketHub, r *http.Request) (ClientAttributes, error)
-	OnConnect        *func(hub *WebSocketHub, clientAttributes ClientAttributes, r *http.Request)
-	OnDisconnect     *func(hub *WebSocketHub, clientAttributes ClientAttributes, err error)
+	WelcomeMessage   *func(hub *WebSocketHub, clientGuid string, clientAttributes ClientAttributes, r *http.Request) ([]byte, error)
+	OnConnect        *func(hub *WebSocketHub, clientGuid string, clientAttributes ClientAttributes, r *http.Request)
+	OnDisconnect     *func(hub *WebSocketHub, clientGuid string, clientAttributes ClientAttributes, err error)
 	OnError          *func(err error)
 }
 
@@ -18,11 +19,15 @@ func ClientAttributesFunc(clientAttributesFunc func(hub *WebSocketHub, r *http.R
 	return &clientAttributesFunc
 }
 
-func OnConnect(onConnectFunc func(hub *WebSocketHub, clientAttributes ClientAttributes, r *http.Request)) *func(hub *WebSocketHub, clientAttributes ClientAttributes, r *http.Request) {
+func WelcomeMessage(welcomeMessageFunc func(hub *WebSocketHub, clientGuid string, clientAttributes ClientAttributes, r *http.Request) ([]byte, error)) *func(hub *WebSocketHub, clientGuid string, clientAttributes ClientAttributes, r *http.Request) ([]byte, error) {
+	return &welcomeMessageFunc
+}
+
+func OnConnect(onConnectFunc func(hub *WebSocketHub, clientGuid string, clientAttributes ClientAttributes, r *http.Request)) *func(hub *WebSocketHub, clientGuid string, clientAttributes ClientAttributes, r *http.Request) {
 	return &onConnectFunc
 }
 
-func OnDisconnect(onDisconnectFunc func(hub *WebSocketHub, clientAttributes ClientAttributes, err error)) *func(hub *WebSocketHub, clientAttributes ClientAttributes, err error) {
+func OnDisconnect(onDisconnectFunc func(hub *WebSocketHub, clientGuid string, clientAttributes ClientAttributes, err error)) *func(hub *WebSocketHub, clientGuid string, clientAttributes ClientAttributes, err error) {
 	return &onDisconnectFunc
 }
 

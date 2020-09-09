@@ -6,6 +6,7 @@ package uwebsocket
 import (
 	"bytes"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -45,7 +46,9 @@ type WebSocketClient struct {
 	// Buffered channel of outbound messages.
 	send chan []byte
 
-	attributes ClientAttributes
+	connectRequest *http.Request
+	clientGuid     string
+	attributes     ClientAttributes
 
 	handler *Handler
 }
@@ -136,7 +139,7 @@ func (c *WebSocketClient) writePump() {
 				err = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				if err != nil {
 					if c.handler != nil && c.handler.OnDisconnect != nil {
-						(*c.handler.OnDisconnect)(c.hub, c.attributes, fmt.Errorf("WebsocketConnection closed (%v)", err))
+						(*c.handler.OnDisconnect)(c.hub, c.clientGuid, c.attributes, fmt.Errorf("WebsocketConnection closed (%v)", err))
 					} else {
 						config.CustomLog.Infof("WebsocketConnection closed (%v)", err)
 					}
@@ -193,7 +196,7 @@ func (c *WebSocketClient) writePump() {
 			}
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				if c.handler != nil && c.handler.OnDisconnect != nil {
-					(*c.handler.OnDisconnect)(c.hub, c.attributes, fmt.Errorf("WebsocketConnection closed, could not send ping (%v)", err))
+					(*c.handler.OnDisconnect)(c.hub, c.clientGuid, c.attributes, fmt.Errorf("WebsocketConnection closed, could not send ping (%v)", err))
 				} else {
 					config.CustomLog.Infof("WebsocketConnection closed, could not send ping (%v)", err)
 				}

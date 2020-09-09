@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "allowSyntheticDefaultImports": true,
+    "noImplicitAny": true,
+    "strict": true,
+    "preserveConstEnums": false,
+    "removeComments": true, // for code-splitting
+    "sourceMap": true,
+    "target": "es6", // required for treeShaking (smaller package)
+    "module": "esnext", // required for treeShaking (smaller package)
+    "moduleResolution": "node", // required for treeShaking (smaller package)
+    "jsx": "react",
+    "experimentalDecorators": true,
+    "importHelpers": true
+  },
+  "include": ["./**/*"],
+  "exclude": ["node_modules", "./**/*.less.d.ts"]
+}
