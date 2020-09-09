@@ -11,7 +11,7 @@ type Handler struct {
 	ClientAttributes *func(hub *WebSocketHub, r *http.Request) (ClientAttributes, error)
 	WelcomeMessage   *func(hub *WebSocketHub, clientGuid string, clientAttributes ClientAttributes, r *http.Request) ([]byte, error)
 	OnConnect        *func(hub *WebSocketHub, clientGuid string, clientAttributes ClientAttributes, r *http.Request)
-	OnDisconnect     *func(hub *WebSocketHub, clientGuid string, clientAttributes ClientAttributes, err error)
+	OnDisconnect     *func(hub *WebSocketHub, clientGuid string, clientAttributes ClientAttributes, r *http.Request, err error)
 	OnError          *func(err error)
 }
 
@@ -27,7 +27,7 @@ func OnConnect(onConnectFunc func(hub *WebSocketHub, clientGuid string, clientAt
 	return &onConnectFunc
 }
 
-func OnDisconnect(onDisconnectFunc func(hub *WebSocketHub, clientGuid string, clientAttributes ClientAttributes, err error)) *func(hub *WebSocketHub, clientGuid string, clientAttributes ClientAttributes, err error) {
+func OnDisconnect(onDisconnectFunc func(hub *WebSocketHub, clientGuid string, clientAttributes ClientAttributes, r *http.Request, err error)) *func(hub *WebSocketHub, clientGuid string, clientAttributes ClientAttributes, r *http.Request, err error) {
 	return &onDisconnectFunc
 }
 

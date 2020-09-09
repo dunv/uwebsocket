@@ -39,14 +39,11 @@ func UpgradeConnection(
 		hub:            hub,
 		conn:           conn,
 		send:           make(chan []byte, 256),
-		clientGuid:     clientGuid,
+		clientGUID:     clientGuid,
 		attributes:     clientAttributes,
 		connectRequest: r,
 		handler:        handler,
 	}
 	client.hub.register <- client
-
-	go client.writePump()
-	go client.readPump()
 	return nil
 }

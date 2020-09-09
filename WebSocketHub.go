@@ -14,7 +14,7 @@ import (
 )
 
 type WebSocketHub struct {
-	clients          map[*WebSocketClient]bool
+	clients          map[string]*WebSocketClient
 	register         chan *WebSocketClient
 	unregister       chan *WebSocketClient
 	incomingMessages chan ClientMessage
@@ -35,7 +35,7 @@ func NewWebSocketHub(u *uhttp.UHTTP, messagHandler *chan ClientMessage, ctx cont
 	return &WebSocketHub{
 		register:         make(chan *WebSocketClient),
 		unregister:       make(chan *WebSocketClient),
-		clients:          make(map[*WebSocketClient]bool),
+		clients:          make(map[string]*WebSocketClient),
 		incomingMessages: make(chan ClientMessage),
 		messageHandler:   messagHandler,
 		u:                u,
@@ -52,20 +52,36 @@ func CreateHubAndRunInBackground(u *uhttp.UHTTP, messageHandler *chan ClientMess
 	return hub
 }
 
-func (h *WebSocketHub) SendWithFilter(filterFunc func(attrs ClientAttributes) bool, message []byte) error {
+func (h *WebSocketHub) SendWithFilter(filterFunc func(attrs ClientAttributes) bool, message []byte, ctx context.Context) error {
 	h.clientLock.Lock()
 	defer h.clientLock.Unlock()
 
-	for client := range h.clients {
+	for _, client := range h.clients {
 		if filterFunc(client.attributes) {
 			select {
 			case client.send <- message:
-			default:
-				h.unregister <- client
+			case <-ctx.Done():
+				return context.DeadlineExceeded
 			}
 		}
 	}
 	return nil
+}
+
+func (h *WebSocketHub) SendToClient(clientGUID string, message []byte, ctx context.Context) error {
+	h.clientLock.Lock()
+	defer h.clientLock.Unlock()
+
+	if client, ok := h.clients[clientGUID]; ok {
+		select {
+		case client.send <- message:
+			return nil
+		case <-ctx.Done():
+			return context.DeadlineExceeded
+		}
+	}
+
+	return fmt.Errorf("client with GUID %s not found", clientGUID)
 }
 
 func (h *WebSocketHub) Run() {
@@ -73,28 +89,29 @@ func (h *WebSocketHub) Run() {
 		select {
 		case <-h.ctx.Done():
 			h.clientLock.Lock()
-			for client := range h.clients {
-				delete(h.clients, client)
+			for _, client := range h.clients {
+				delete(h.clients, client.clientGUID)
 				close(client.send)
 			}
 			h.clientLock.Unlock()
 			return
 		case client := <-h.register:
 			h.clientLock.Lock()
-			h.clients[client] = true
+			h.clients[client.clientGUID] = client
+			go client.writePump(h.ctx)
+			go client.readPump(h.ctx)
 			h.clientLock.Unlock()
 			if client.handler != nil && client.handler.WelcomeMessage != nil {
-				if welcomeMessage, err := (*client.handler.WelcomeMessage)(h, client.clientGuid, client.attributes, client.connectRequest); err == nil {
+				if welcomeMessage, err := (*client.handler.WelcomeMessage)(h, client.clientGUID, client.attributes, client.connectRequest); err == nil {
 					client.send <- welcomeMessage
 				} else {
 					config.CustomLog.Errorf("Could not generate welcomeMessage %v", err)
 				}
 			}
-
 		case client := <-h.unregister:
 			h.clientLock.Lock()
-			if _, ok := h.clients[client]; ok {
-				delete(h.clients, client)
+			if _, ok := h.clients[client.clientGUID]; ok {
+				delete(h.clients, client.clientGUID)
 				close(client.send)
 			}
 			h.clientLock.Unlock()

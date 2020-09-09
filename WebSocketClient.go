@@ -5,6 +5,7 @@ package uwebsocket
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net/http"
 	"time"
@@ -46,8 +47,9 @@ type WebSocketClient struct {
 	// Buffered channel of outbound messages.
 	send chan []byte
 
+	// ClientAttributes
 	connectRequest *http.Request
-	clientGuid     string
+	clientGUID     string
 	attributes     ClientAttributes
 
 	handler *Handler
@@ -58,7 +60,7 @@ type WebSocketClient struct {
 // The application runs readPump in a per-connection goroutine. The application
 // ensures that there is at most one reader on a connection by executing all
 // reads from this goroutine.
-func (c *WebSocketClient) readPump() {
+func (c *WebSocketClient) readPump(ctx context.Context) {
 	defer func() {
 		c.hub.unregister <- c
 		c.conn.Close()
@@ -85,6 +87,15 @@ func (c *WebSocketClient) readPump() {
 	})
 
 	for {
+		if err := ctx.Err(); err != nil {
+			if c.handler != nil && c.handler.OnError != nil {
+				(*c.handler.OnError)(fmt.Errorf("ContextCancelled on connection (%v)", err))
+			} else {
+				config.CustomLog.Errorf("ContextCancelled on connection (%v)", err)
+			}
+			break
+		}
+
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
@@ -116,13 +127,22 @@ func (c *WebSocketClient) readPump() {
 // A goroutine running writePump is started for each connection. The
 // application ensures that there is at most one writer to a connection by
 // executing all writes from this goroutine.
-func (c *WebSocketClient) writePump() {
+func (c *WebSocketClient) writePump(ctx context.Context) {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
 		c.conn.Close()
 	}()
 	for {
+		if err := ctx.Err(); err != nil {
+			if c.handler != nil && c.handler.OnError != nil {
+				(*c.handler.OnError)(fmt.Errorf("ContextCancelled on connection (%v)", err))
+			} else {
+				config.CustomLog.Errorf("ContextCancelled on connection (%v)", err)
+			}
+			break
+		}
+
 		select {
 		case message, ok := <-c.send:
 			err := c.conn.SetWriteDeadline(time.Now().Add(writeWait))
@@ -139,7 +159,7 @@ func (c *WebSocketClient) writePump() {
 				err = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				if err != nil {
 					if c.handler != nil && c.handler.OnDisconnect != nil {
-						(*c.handler.OnDisconnect)(c.hub, c.clientGuid, c.attributes, fmt.Errorf("WebsocketConnection closed (%v)", err))
+						(*c.handler.OnDisconnect)(c.hub, c.clientGUID, c.attributes, c.connectRequest, fmt.Errorf("WebsocketConnection closed (%v)", err))
 					} else {
 						config.CustomLog.Infof("WebsocketConnection closed (%v)", err)
 					}
@@ -196,7 +216,7 @@ func (c *WebSocketClient) writePump() {
 			}
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				if c.handler != nil && c.handler.OnDisconnect != nil {
-					(*c.handler.OnDisconnect)(c.hub, c.clientGuid, c.attributes, fmt.Errorf("WebsocketConnection closed, could not send ping (%v)", err))
+					(*c.handler.OnDisconnect)(c.hub, c.clientGUID, c.attributes, c.connectRequest, fmt.Errorf("WebsocketConnection closed, could not send ping (%v)", err))
 				} else {
 					config.CustomLog.Infof("WebsocketConnection closed, could not send ping (%v)", err)
 				}

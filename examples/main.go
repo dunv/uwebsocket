@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/dunv/uhelpers"
 	"github.com/dunv/uhttp"
@@ -29,12 +30,15 @@ func main() {
 
 	go func() {
 		for inboundMessage := range inboundMessages {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			ulog.LogIfError(wsHub.SendWithFilter(
 				func(attrs ws.ClientAttributes) bool {
 					return attrs["clientGuid"] == inboundMessage.Client["clientGuid"]
 				},
-				[]byte(fmt.Sprintf("response to %s", inboundMessage.Message)),
+				[]byte(fmt.Sprintf(`{ "msg": "response to %s"}`, inboundMessage.Message)),
+				ctx,
 			))
+			cancel()
 		}
 	}()
 
@@ -44,7 +48,7 @@ func main() {
 
 var WsHandler = &ws.Handler{
 	ClientAttributes: ws.ClientAttributesFunc(func(hub *ws.WebSocketHub, r *http.Request) (ws.ClientAttributes, error) {
-		clientAttributeMap := map[string]interface{}{"clientGuid": uhelpers.PtrToString(uuid.New().String())}
+		clientAttributeMap := map[string]interface{}{"testGuid": uhelpers.PtrToString(uuid.New().String())}
 		return clientAttributeMap, nil
 	}),
 	WelcomeMessage: ws.WelcomeMessage(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes ws.ClientAttributes, r *http.Request) ([]byte, error) {
@@ -53,7 +57,7 @@ var WsHandler = &ws.Handler{
 	OnConnect: ws.OnConnect(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes ws.ClientAttributes, r *http.Request) {
 		ulog.Infof("Client connected %v", clientGuid)
 	}),
-	OnDisconnect: ws.OnDisconnect(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes ws.ClientAttributes, err error) {
+	OnDisconnect: ws.OnDisconnect(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes ws.ClientAttributes, r *http.Request, err error) {
 		ulog.Infof("Client disonnected %v", clientGuid)
 	}),
 }
