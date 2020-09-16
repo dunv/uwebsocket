@@ -1,8 +1,6 @@
 package uwebsocket
 
 import (
-	"fmt"
-
 	"github.com/dunv/uhelpers"
 )
 
@@ -15,12 +13,7 @@ func (c ClientAttributes) IsFlagSet(key string) bool {
 
 func (c ClientAttributes) HasMatch(key string, value string) bool {
 	rawMap := map[string]interface{}(c)
-	fmt.Println("rawMap", rawMap)
-	fmt.Println("ptr", uhelpers.PtrToString(value))
-	fmt.Println("checking key", key)
-	fmt.Println("checking value", value)
 	val := uhelpers.IsMatchingStringPointerInMap(uhelpers.PtrToString(value), rawMap, key)
-	fmt.Println("checking result", val)
 	return val
 }
 
