@@ -52,12 +52,12 @@ func CreateHubAndRunInBackground(u *uhttp.UHTTP, messageHandler *chan ClientMess
 	return hub
 }
 
-func (h *WebSocketHub) SendWithFilter(filterFunc func(attrs ClientAttributes) bool, message []byte, ctx context.Context) error {
+func (h *WebSocketHub) SendWithFilterSync(filterFunc func(clientGUID string, attrs *ClientAttributes) bool, message []byte, ctx context.Context) error {
 	h.clientLock.Lock()
 	defer h.clientLock.Unlock()
 
 	for _, client := range h.clients {
-		if filterFunc(client.attributes) {
+		if filterFunc(client.clientGUID, client.attributes) {
 			select {
 			case client.send <- message:
 			case <-ctx.Done():
@@ -68,7 +68,39 @@ func (h *WebSocketHub) SendWithFilter(filterFunc func(attrs ClientAttributes) bo
 	return nil
 }
 
-func (h *WebSocketHub) SendToClient(clientGUID string, message []byte, ctx context.Context) error {
+func (h *WebSocketHub) SendToAllWithFlagSync(flag string, message []byte, ctx context.Context) error {
+	h.clientLock.Lock()
+	defer h.clientLock.Unlock()
+
+	for _, client := range h.clients {
+		if client.attributes.IsFlagSet(flag) {
+			select {
+			case client.send <- message:
+			case <-ctx.Done():
+				return context.DeadlineExceeded
+			}
+		}
+	}
+	return nil
+}
+
+func (h *WebSocketHub) SendToAllWithMatchSync(key string, value string, message []byte, ctx context.Context) error {
+	h.clientLock.Lock()
+	defer h.clientLock.Unlock()
+
+	for _, client := range h.clients {
+		if client.attributes.HasMatch(key, value) {
+			select {
+			case client.send <- message:
+			case <-ctx.Done():
+				return context.DeadlineExceeded
+			}
+		}
+	}
+	return nil
+}
+
+func (h *WebSocketHub) SendToClientSync(clientGUID string, message []byte, ctx context.Context) error {
 	h.clientLock.Lock()
 	defer h.clientLock.Unlock()
 
@@ -128,7 +160,7 @@ func (h *WebSocketHub) Handle(pattern string, handler *Handler) {
 	if handler != nil {
 		h.u.ServeMux().Handle(pattern, handler.UhttpHandler.WsReady(h.u)(func(w http.ResponseWriter, r *http.Request) {
 			clientGuid := uuid.New().String()
-			var attributes ClientAttributes
+			attributes := NewClientAttributes()
 			var err error
 			if handler.ClientAttributes != nil {
 				attributes, err = (*handler.ClientAttributes)(h, r)

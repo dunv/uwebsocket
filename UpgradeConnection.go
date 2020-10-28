@@ -10,7 +10,7 @@ func UpgradeConnection(
 	hub *WebSocketHub,
 	handler *Handler,
 	clientGuid string,
-	clientAttributes ClientAttributes,
+	clientAttributes *ClientAttributes,
 	w http.ResponseWriter,
 	r *http.Request,
 ) error {

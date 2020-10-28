@@ -13,6 +13,8 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// TODO: make time-config configurable
+
 const (
 	// Time allowed to write a message to the peer.
 	writeWait = 10 * time.Second
@@ -50,7 +52,7 @@ type WebSocketClient struct {
 	// ClientAttributes
 	connectRequest *http.Request
 	clientGUID     string
-	attributes     ClientAttributes
+	attributes     *ClientAttributes
 
 	handler *Handler
 }
@@ -69,7 +71,7 @@ func (c *WebSocketClient) readPump(ctx context.Context) {
 	err := c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	if err != nil {
 		if c.handler != nil && c.handler.OnError != nil {
-			(*c.handler.OnError)(fmt.Errorf("Could not SetReadDeadline on connection (%v)", err))
+			(*c.handler.OnError)(c.hub, c.clientGUID, c.attributes, c.connectRequest, fmt.Errorf("Could not SetReadDeadline on connection (%v)", err))
 		} else {
 			config.CustomLog.Errorf("Could not SetReadDeadline on connection (%v)", err)
 		}
@@ -78,7 +80,7 @@ func (c *WebSocketClient) readPump(ctx context.Context) {
 		err = c.conn.SetReadDeadline(time.Now().Add(pongWait))
 		if err != nil {
 			if c.handler != nil && c.handler.OnError != nil {
-				(*c.handler.OnError)(fmt.Errorf("Could not SetPongHandler on connection (%v)", err))
+				(*c.handler.OnError)(c.hub, c.clientGUID, c.attributes, c.connectRequest, fmt.Errorf("Could not SetPongHandler on connection (%v)", err))
 			} else {
 				config.CustomLog.Errorf("Could not SetPongHandler on connection (%v)", err)
 			}
@@ -89,7 +91,7 @@ func (c *WebSocketClient) readPump(ctx context.Context) {
 	for {
 		if err := ctx.Err(); err != nil {
 			if c.handler != nil && c.handler.OnError != nil {
-				(*c.handler.OnError)(fmt.Errorf("ContextCancelled on connection (%v)", err))
+				(*c.handler.OnError)(c.hub, c.clientGUID, c.attributes, c.connectRequest, fmt.Errorf("ContextCancelled on connection (%v)", err))
 			} else {
 				config.CustomLog.Errorf("ContextCancelled on connection (%v)", err)
 			}
@@ -100,7 +102,7 @@ func (c *WebSocketClient) readPump(ctx context.Context) {
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				if c.handler != nil && c.handler.OnError != nil {
-					(*c.handler.OnError)(fmt.Errorf("UnexpectedCloseError on connection (%v)", err))
+					(*c.handler.OnError)(c.hub, c.clientGUID, c.attributes, c.connectRequest, fmt.Errorf("UnexpectedCloseError on connection (%v)", err))
 				} else {
 					config.CustomLog.Errorf("UnexpectedCloseError on connection (%v)", err)
 				}
@@ -116,8 +118,9 @@ func (c *WebSocketClient) readPump(ctx context.Context) {
 		}
 
 		c.hub.incomingMessages <- ClientMessage{
-			Client:  c.attributes,
-			Message: message,
+			ClientAttributes: c.attributes,
+			ClientGUID:       c.clientGUID,
+			Message:          message,
 		}
 	}
 }
@@ -136,7 +139,7 @@ func (c *WebSocketClient) writePump(ctx context.Context) {
 	for {
 		if err := ctx.Err(); err != nil {
 			if c.handler != nil && c.handler.OnError != nil {
-				(*c.handler.OnError)(fmt.Errorf("ContextCancelled on connection (%v)", err))
+				(*c.handler.OnError)(c.hub, c.clientGUID, c.attributes, c.connectRequest, fmt.Errorf("ContextCancelled on connection (%v)", err))
 			} else {
 				config.CustomLog.Errorf("ContextCancelled on connection (%v)", err)
 			}
@@ -148,7 +151,7 @@ func (c *WebSocketClient) writePump(ctx context.Context) {
 			err := c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err != nil {
 				if c.handler != nil && c.handler.OnError != nil {
-					(*c.handler.OnError)(fmt.Errorf("Could not SetWriteDeadline on connection (%v)", err))
+					(*c.handler.OnError)(c.hub, c.clientGUID, c.attributes, c.connectRequest, fmt.Errorf("Could not SetWriteDeadline on connection (%v)", err))
 				} else {
 					config.CustomLog.Errorf("Could not SetWriteDeadline on connection (%v)", err)
 				}
@@ -174,30 +177,9 @@ func (c *WebSocketClient) writePump(ctx context.Context) {
 			_, err = w.Write(message)
 			if err != nil {
 				if c.handler != nil && c.handler.OnError != nil {
-					(*c.handler.OnError)(fmt.Errorf("Could not Write on writer (%v)", err))
+					(*c.handler.OnError)(c.hub, c.clientGUID, c.attributes, c.connectRequest, fmt.Errorf("Could not Write on writer (%v)", err))
 				} else {
 					config.CustomLog.Errorf("Could not Write on writer (%s)", err)
-				}
-			}
-
-			// Add queued chat messages to the current websocket message.
-			n := len(c.send)
-			for i := 0; i < n; i++ {
-				_, err := w.Write(newline)
-				if err != nil {
-					if c.handler != nil && c.handler.OnError != nil {
-						(*c.handler.OnError)(fmt.Errorf("Could not Write on writer (%v)", err))
-					} else {
-						config.CustomLog.Errorf("Could not Write on writer (%s)", err)
-					}
-				}
-				_, err = w.Write(<-c.send)
-				if err != nil {
-					if c.handler != nil && c.handler.OnError != nil {
-						(*c.handler.OnError)(fmt.Errorf("Could not Write on writer (%v)", err))
-					} else {
-						config.CustomLog.Errorf("Could not Write on writer (%s)", err)
-					}
 				}
 			}
 
@@ -209,7 +191,7 @@ func (c *WebSocketClient) writePump(ctx context.Context) {
 			if err != nil {
 				config.CustomLog.Errorf("Could not SetWriteDeadline on connection (%s)", err)
 				if c.handler != nil && c.handler.OnError != nil {
-					(*c.handler.OnError)(fmt.Errorf("Could not SetWriteDeadline on connection (%v)", err))
+					(*c.handler.OnError)(c.hub, c.clientGUID, c.attributes, c.connectRequest, fmt.Errorf("Could not SetWriteDeadline on connection (%v)", err))
 				} else {
 					config.CustomLog.Errorf("Could not SetWriteDeadline on connection (%s)", err)
 				}
