@@ -5,6 +5,7 @@ package uwebsocket
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -12,6 +13,8 @@ import (
 	"github.com/dunv/uhttp"
 	"github.com/google/uuid"
 )
+
+var ErrClientNotFound = errors.New("client not found")
 
 type WebSocketHub struct {
 	clients          map[string]*WebSocketClient
@@ -27,11 +30,13 @@ type WebSocketHub struct {
 	// lock list
 	clientLock *sync.Mutex
 
+	messageType int
+
 	// this context can cancel the run-routine
 	ctx context.Context
 }
 
-func NewWebSocketHub(u *uhttp.UHTTP, messagHandler *chan ClientMessage, ctx context.Context) *WebSocketHub {
+func NewWebSocketHub(u *uhttp.UHTTP, messagHandler *chan ClientMessage, messageType int, ctx context.Context) *WebSocketHub {
 	return &WebSocketHub{
 		register:         make(chan *WebSocketClient),
 		unregister:       make(chan *WebSocketClient),
@@ -40,12 +45,13 @@ func NewWebSocketHub(u *uhttp.UHTTP, messagHandler *chan ClientMessage, ctx cont
 		messageHandler:   messagHandler,
 		u:                u,
 		clientLock:       &sync.Mutex{},
+		messageType:      messageType,
 		ctx:              ctx,
 	}
 }
 
-func CreateHubAndRunInBackground(u *uhttp.UHTTP, messageHandler *chan ClientMessage, ctx context.Context) *WebSocketHub {
-	hub := NewWebSocketHub(u, messageHandler, ctx)
+func CreateHubAndRunInBackground(u *uhttp.UHTTP, messageHandler *chan ClientMessage, messageType int, ctx context.Context) *WebSocketHub {
+	hub := NewWebSocketHub(u, messageHandler, messageType, ctx)
 	go func() {
 		hub.Run()
 	}()
@@ -113,7 +119,7 @@ func (h *WebSocketHub) SendToClientSync(clientGUID string, message []byte, ctx c
 		}
 	}
 
-	return fmt.Errorf("client with GUID %s not found", clientGUID)
+	return ErrClientNotFound
 }
 
 func (h *WebSocketHub) Run() {
@@ -133,9 +139,11 @@ func (h *WebSocketHub) Run() {
 			go client.writePump(h.ctx)
 			go client.readPump(h.ctx)
 			h.clientLock.Unlock()
-			if client.handler != nil && client.handler.WelcomeMessage != nil {
-				if welcomeMessage, err := (*client.handler.WelcomeMessage)(h, client.clientGUID, client.attributes, client.connectRequest); err == nil {
-					client.send <- welcomeMessage
+			if client.handler != nil && client.handler.WelcomeMessages != nil {
+				if welcomeMessages, err := (*client.handler.WelcomeMessages)(h, client.clientGUID, client.attributes, client.connectRequest); err == nil {
+					for _, msg := range welcomeMessages {
+						client.send <- msg
+					}
 				} else {
 					config.CustomLog.Errorf("Could not generate welcomeMessage %v", err)
 				}

@@ -170,7 +170,7 @@ func (c *WebSocketClient) writePump(ctx context.Context) {
 				return
 			}
 
-			w, err := c.conn.NextWriter(websocket.TextMessage)
+			w, err := c.conn.NextWriter(c.hub.messageType)
 			if err != nil {
 				return
 			}

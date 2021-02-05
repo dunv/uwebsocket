@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,7 +11,7 @@ import (
 	"github.com/dunv/ulog"
 	ws "github.com/dunv/uwebsocket"
 	"github.com/google/uuid"
-	"golang.org/x/net/context"
+	"github.com/gorilla/websocket"
 )
 
 func main() {
@@ -26,7 +27,7 @@ func main() {
 	inboundMessages := make(chan ws.ClientMessage)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	wsHub := ws.CreateHubAndRunInBackground(u, &inboundMessages, ctx)
+	wsHub := ws.CreateHubAndRunInBackground(u, &inboundMessages, websocket.TextMessage, ctx)
 
 	go func() {
 		for inboundMessage := range inboundMessages {
@@ -71,8 +72,8 @@ var WsHandler = &ws.Handler{
 	ClientAttributes: ws.ClientAttributesFunc(func(hub *ws.WebSocketHub, r *http.Request) (*ws.ClientAttributes, error) {
 		return ws.NewClientAttributes().SetString("testGuid", uuid.New().String()), nil
 	}),
-	WelcomeMessage: ws.WelcomeMessage(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes *ws.ClientAttributes, r *http.Request) ([]byte, error) {
-		return []byte(fmt.Sprintf(`{"msg": "Welcome, %s"}`, clientGuid)), nil
+	WelcomeMessages: ws.WelcomeMessages(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes *ws.ClientAttributes, r *http.Request) ([][]byte, error) {
+		return [][]byte{[]byte(fmt.Sprintf(`{"msg": "Welcome, %s"}`, clientGuid)), nil}, nil
 	}),
 	OnConnect: ws.OnConnect(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes *ws.ClientAttributes, r *http.Request) {
 		ulog.Infof("Client connected %v", clientGuid)
