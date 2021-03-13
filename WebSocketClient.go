@@ -6,7 +6,6 @@ package uwebsocket
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -34,11 +33,6 @@ var (
 	space   = []byte{' '}
 )
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-}
-
 // Client is a middleman between the websocket connection and the hub.
 type WebSocketClient struct {
 	hub *WebSocketHub
@@ -54,7 +48,15 @@ type WebSocketClient struct {
 	clientGUID     string
 	attributes     *ClientAttributes
 
-	handler *Handler
+	handler Handler
+}
+
+func (c *WebSocketClient) handleError(err error) {
+	if c.handler.wsOpts.onError != nil {
+		(*c.handler.wsOpts.onError)(c.hub, c.clientGUID, c.attributes, c.connectRequest, err)
+	} else {
+		c.hub.u.Log().Error(err)
+	}
 }
 
 // readPump pumps messages from the websocket connection to the hub.
@@ -63,53 +65,46 @@ type WebSocketClient struct {
 // ensures that there is at most one reader on a connection by executing all
 // reads from this goroutine.
 func (c *WebSocketClient) readPump(ctx context.Context) {
+	readContext, cancel := context.WithCancel(ctx)
+
 	defer func() {
 		c.hub.unregister <- c
 		c.conn.Close()
+		cancel()
 	}()
+
 	c.conn.SetReadLimit(maxMessageSize)
 	err := c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	if err != nil {
-		if c.handler != nil && c.handler.OnError != nil {
-			(*c.handler.OnError)(c.hub, c.clientGUID, c.attributes, c.connectRequest, fmt.Errorf("Could not SetReadDeadline on connection (%v)", err))
-		} else {
-			config.CustomLog.Errorf("Could not SetReadDeadline on connection (%v)", err)
-		}
+		c.handleError(err)
+		return
 	}
-	c.conn.SetPongHandler(func(string) error {
+
+	c.conn.SetPongHandler(func(input string) error {
 		err = c.conn.SetReadDeadline(time.Now().Add(pongWait))
 		if err != nil {
-			if c.handler != nil && c.handler.OnError != nil {
-				(*c.handler.OnError)(c.hub, c.clientGUID, c.attributes, c.connectRequest, fmt.Errorf("Could not SetPongHandler on connection (%v)", err))
-			} else {
-				config.CustomLog.Errorf("Could not SetPongHandler on connection (%v)", err)
-			}
+			cancel()
+			c.handleError(err)
 		}
 		return nil
 	})
 
 	for {
-		if err := ctx.Err(); err != nil {
-			if c.handler != nil && c.handler.OnError != nil {
-				(*c.handler.OnError)(c.hub, c.clientGUID, c.attributes, c.connectRequest, fmt.Errorf("ContextCancelled on connection (%v)", err))
-			} else {
-				config.CustomLog.Errorf("ContextCancelled on connection (%v)", err)
-			}
-			break
+		if err := readContext.Err(); err != nil {
+			c.handleError(err)
+			return
 		}
 
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				if c.handler != nil && c.handler.OnError != nil {
-					(*c.handler.OnError)(c.hub, c.clientGUID, c.attributes, c.connectRequest, fmt.Errorf("UnexpectedCloseError on connection (%v)", err))
-				} else {
-					config.CustomLog.Errorf("UnexpectedCloseError on connection (%v)", err)
-				}
+				// some "unexpected" messages are actually ok
+				return
 			}
-			break
+			c.handleError(err)
+			return
 		}
-		message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
+		message = bytes.TrimSpace(bytes.ReplaceAll(message, newline, space))
 
 		// support client side ping-pong via text-message
 		if bytes.Equal(message, []byte("PING")) {
@@ -131,18 +126,18 @@ func (c *WebSocketClient) readPump(ctx context.Context) {
 // application ensures that there is at most one writer to a connection by
 // executing all writes from this goroutine.
 func (c *WebSocketClient) writePump(ctx context.Context) {
+	writeContext, cancel := context.WithCancel(ctx)
+
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
 		c.conn.Close()
+		cancel()
 	}()
+
 	for {
-		if err := ctx.Err(); err != nil {
-			if c.handler != nil && c.handler.OnError != nil {
-				(*c.handler.OnError)(c.hub, c.clientGUID, c.attributes, c.connectRequest, fmt.Errorf("ContextCancelled on connection (%v)", err))
-			} else {
-				config.CustomLog.Errorf("ContextCancelled on connection (%v)", err)
-			}
+		if err := writeContext.Err(); err != nil {
+			c.handleError(err)
 			break
 		}
 
@@ -150,58 +145,42 @@ func (c *WebSocketClient) writePump(ctx context.Context) {
 		case message, ok := <-c.send:
 			err := c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err != nil {
-				if c.handler != nil && c.handler.OnError != nil {
-					(*c.handler.OnError)(c.hub, c.clientGUID, c.attributes, c.connectRequest, fmt.Errorf("Could not SetWriteDeadline on connection (%v)", err))
-				} else {
-					config.CustomLog.Errorf("Could not SetWriteDeadline on connection (%v)", err)
-				}
+				c.handleError(err)
+				return
 			}
 
 			if !ok {
 				// The hub closed the channel.
 				err = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				if err != nil {
-					if c.handler != nil && c.handler.OnDisconnect != nil {
-						(*c.handler.OnDisconnect)(c.hub, c.clientGUID, c.attributes, c.connectRequest, fmt.Errorf("WebsocketConnection closed (%v)", err))
-					} else {
-						config.CustomLog.Infof("WebsocketConnection closed (%v)", err)
-					}
+					c.handleError(err)
 				}
 				return
 			}
 
 			w, err := c.conn.NextWriter(c.hub.messageType)
 			if err != nil {
+				c.handleError(err)
 				return
 			}
 			_, err = w.Write(message)
 			if err != nil {
-				if c.handler != nil && c.handler.OnError != nil {
-					(*c.handler.OnError)(c.hub, c.clientGUID, c.attributes, c.connectRequest, fmt.Errorf("Could not Write on writer (%v)", err))
-				} else {
-					config.CustomLog.Errorf("Could not Write on writer (%s)", err)
-				}
+				c.handleError(err)
+				return
 			}
 
 			if err := w.Close(); err != nil {
+				c.handleError(err)
 				return
 			}
 		case <-ticker.C:
 			err := c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err != nil {
-				config.CustomLog.Errorf("Could not SetWriteDeadline on connection (%s)", err)
-				if c.handler != nil && c.handler.OnError != nil {
-					(*c.handler.OnError)(c.hub, c.clientGUID, c.attributes, c.connectRequest, fmt.Errorf("Could not SetWriteDeadline on connection (%v)", err))
-				} else {
-					config.CustomLog.Errorf("Could not SetWriteDeadline on connection (%s)", err)
-				}
+				c.handleError(err)
+				return
 			}
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-				if c.handler != nil && c.handler.OnDisconnect != nil {
-					(*c.handler.OnDisconnect)(c.hub, c.clientGUID, c.attributes, c.connectRequest, fmt.Errorf("WebsocketConnection closed, could not send ping (%v)", err))
-				} else {
-					config.CustomLog.Infof("WebsocketConnection closed, could not send ping (%v)", err)
-				}
+				c.handleError(err)
 				return
 			}
 		}

@@ -1,41 +1,78 @@
 import * as React from "react";
 import * as ReactDOM from "react-dom";
-import { ws } from "./websocket";
+import useWebSocket, { ReadyState } from "react-use-websocket";
 
 const rootDiv = document.createElement("div");
 rootDiv.id = "root";
 document.body.appendChild(rootDiv);
 
 const Index: React.FC<{}> = () => {
-  const [wsCloser, setWsCloser] = React.useState<Promise<() => void>>();
+  const [input, setInput] = React.useState<string>("");
+  const [msgCounter, setMsgCounter] = React.useState<number>(0);
+  const [wsError, setWsError] = React.useState<string>();
 
-  const onMessage = (message: string) => {
-    console.log("received message", message);
-  };
-
-  const connectSocket = async () => {
-    if (!wsCloser) {
-      console.log("connecting");
-      const closer = ws("ws://localhost:8080", "ws", "example", {}, onMessage);
-      setWsCloser(closer);
-      console.log("connected");
+  const { sendMessage, lastJsonMessage, readyState } = useWebSocket(
+    "ws://localhost:8080/wsText",
+    {
+      onOpen: (e) => {
+        setMsgCounter(0);
+        console.log("opened", e);
+      },
+      onClose: (e) => console.log("closed", e),
+      onMessage: (e) => {
+        setMsgCounter(msgCounter + 1);
+        console.log("receivedMessage", e);
+      },
+      shouldReconnect: (closeEvent) => {
+        console.log("closeEvent", closeEvent);
+        return true;
+      },
+      onReconnectStop: (e) => setWsError("reconnects exceeded"),
+      retryOnError: true,
     }
+  );
+
+  const styleSans: React.CSSProperties = {
+    fontFamily: "monospace",
+    marginBottom: "1rem",
+    whiteSpace: "pre",
   };
 
-  const disconnectSocket = async () => {
-    if (wsCloser) {
-      console.log("disconnecting");
-      (await wsCloser)();
-      setWsCloser(undefined);
-      console.log("disconnected");
-    }
-  };
   return (
     <div>
-      {!wsCloser && <button onClick={() => connectSocket()}>Connect</button>}
-      {wsCloser && (
-        <button onClick={() => disconnectSocket()}>Disconnect</button>
+      {readyState === ReadyState.CLOSED && <div style={styleSans}>closed</div>}
+      {readyState === ReadyState.CLOSING && (
+        <div style={styleSans}>closing</div>
       )}
+      {readyState === ReadyState.CONNECTING && (
+        <div style={styleSans}>connecting</div>
+      )}
+      {readyState === ReadyState.OPEN && <div style={styleSans}>open</div>}
+      {readyState === ReadyState.UNINSTANTIATED && (
+        <div style={styleSans}>uninstantiated</div>
+      )}
+      {readyState === ReadyState.OPEN && (
+        <form>
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.currentTarget.value)}
+          />
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              input && sendMessage(input);
+              setInput("");
+            }}
+            type="submit"
+          >
+            Send
+          </button>
+        </form>
+      )}
+      {wsError && <div>Err: {JSON.stringify(wsError)}</div>}
+      <div>Received messages: {msgCounter}</div>
+      <div style={styleSans}>{JSON.stringify(lastJsonMessage, null, "  ")}</div>
     </div>
   );
 };

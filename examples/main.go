@@ -17,22 +17,20 @@ import (
 func main() {
 	// implementation for an echo-server
 
-	// can be tested with
-	// websocat ws://localhost:8080/ws
+	// command-line: websocat ws://localhost:8080/wsText
+	// javascript:   npm start
 
-	u := uhttp.NewUHTTP(
-		uhttp.WithAddress("0.0.0.0:8080"),
-	)
+	u := uhttp.NewUHTTP(uhttp.WithAddress("0.0.0.0:8080"))
 
-	inboundMessages := make(chan ws.ClientMessage)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	wsHub := ws.CreateHubAndRunInBackground(u, &inboundMessages, websocket.TextMessage, ctx)
 
+	textInboundMessages := make(chan ws.ClientMessage)
+	textHub := ws.CreateHubAndRunInBackground(u, &textInboundMessages, websocket.TextMessage, ctx)
 	go func() {
-		for inboundMessage := range inboundMessages {
+		for inboundMessage := range textInboundMessages {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			ulog.LogIfError(wsHub.SendToClientSync(
+			ulog.LogIfError(textHub.SendToClientSync(
 				inboundMessage.ClientGUID,
 				[]byte(fmt.Sprintf(`{ "msg": "response to %s" }`, inboundMessage.Message)),
 				ctx,
@@ -40,7 +38,6 @@ func main() {
 			cancel()
 		}
 	}()
-
 	go func() {
 		for {
 			input := ""
@@ -49,6 +46,7 @@ func main() {
 				ulog.Errorf("could not scan (%s)", err)
 				continue
 			}
+			ulog.Infof("scanned %s", input)
 
 			marshaled, err := json.Marshal(map[string]string{"received": input})
 			if err != nil {
@@ -57,28 +55,26 @@ func main() {
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			ulog.LogIfError(wsHub.SendWithFilterSync(func(clientGUID string, attrs *ws.ClientAttributes) bool {
+			ulog.LogIfError(textHub.SendWithFilterSync(func(clientGUID string, attrs *ws.ClientAttributes) bool {
 				return true
 			}, marshaled, ctx))
 			cancel()
 		}
 	}()
+	textHub.Handle("/wsText", ws.NewHandler(
+		ws.WithClientAttributes(func(hub *ws.WebSocketHub, r *http.Request) (*ws.ClientAttributes, error) {
+			return ws.NewClientAttributes().SetString("testGuid", uuid.New().String()), nil
+		}),
+		ws.WithWelcomeMessages(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes *ws.ClientAttributes, r *http.Request) ([][]byte, error) {
+			return [][]byte{[]byte(fmt.Sprintf(`{"msg": "Welcome, %s"}`, clientGuid))}, nil
+		}),
+		ws.WithOnConnect(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes *ws.ClientAttributes, r *http.Request) {
+			ulog.Infof("Client connected %v", clientGuid)
+		}),
+		ws.WithOnDisconnect(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes *ws.ClientAttributes, r *http.Request, err error) {
+			ulog.Infof("Client disonnected %v", clientGuid)
+		}),
+	))
 
-	wsHub.Handle("/ws", WsHandler)
 	ulog.Fatal(u.ListenAndServe()) // need to investigate, why does this not work with localhost
-}
-
-var WsHandler = &ws.Handler{
-	ClientAttributes: ws.ClientAttributesFunc(func(hub *ws.WebSocketHub, r *http.Request) (*ws.ClientAttributes, error) {
-		return ws.NewClientAttributes().SetString("testGuid", uuid.New().String()), nil
-	}),
-	WelcomeMessages: ws.WelcomeMessages(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes *ws.ClientAttributes, r *http.Request) ([][]byte, error) {
-		return [][]byte{[]byte(fmt.Sprintf(`{"msg": "Welcome, %s"}`, clientGuid)), nil}, nil
-	}),
-	OnConnect: ws.OnConnect(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes *ws.ClientAttributes, r *http.Request) {
-		ulog.Infof("Client connected %v", clientGuid)
-	}),
-	OnDisconnect: ws.OnDisconnect(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes *ws.ClientAttributes, r *http.Request, err error) {
-		ulog.Infof("Client disonnected %v", clientGuid)
-	}),
 }

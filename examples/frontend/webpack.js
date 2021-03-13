@@ -1,5 +1,6 @@
 const HtmlWebpackPlugin = require("html-webpack-plugin");
 const { CleanWebpackPlugin } = require("clean-webpack-plugin");
+const path = require("path");
 
 const config = {
   entry: {
@@ -26,6 +27,15 @@ const config = {
     }),
     new CleanWebpackPlugin(),
   ],
+  mode: "development",
+  devtool: "inline-source-map",
+  devServer: {
+    contentBase: path.resolve(__dirname, "dist"),
+    historyApiFallback: true,
+    host: "0.0.0.0",
+    port: 4000,
+    stats: "minimal",
+  },
 };
 
 module.exports = config;

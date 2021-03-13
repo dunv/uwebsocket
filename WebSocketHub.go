@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/dunv/uhttp"
 	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 )
 
 var ErrClientNotFound = errors.New("client not found")
@@ -30,7 +32,11 @@ type WebSocketHub struct {
 	// lock list
 	clientLock *sync.Mutex
 
+	// websocket message-types (text or bytes for sending and receiving)
 	messageType int
+
+	// hold a configured upgrader
+	upgrader websocket.Upgrader
 
 	// this context can cancel the run-routine
 	ctx context.Context
@@ -47,6 +53,10 @@ func NewWebSocketHub(u *uhttp.UHTTP, messagHandler *chan ClientMessage, messageT
 		clientLock:       &sync.Mutex{},
 		messageType:      messageType,
 		ctx:              ctx,
+		upgrader: websocket.Upgrader{
+			ReadBufferSize:  1024,
+			WriteBufferSize: 1024,
+		},
 	}
 }
 
@@ -56,6 +66,36 @@ func CreateHubAndRunInBackground(u *uhttp.UHTTP, messageHandler *chan ClientMess
 		hub.Run()
 	}()
 	return hub
+}
+
+func (h *WebSocketHub) upgradeConnection(handler Handler, clientGuid string, clientAttributes *ClientAttributes, w http.ResponseWriter, r *http.Request) error {
+	h.upgrader.CheckOrigin = func(r *http.Request) bool {
+		if h.u.CORS() == "*" {
+			return true
+		}
+		for _, host := range strings.Split(h.u.CORS(), ",") {
+			if host == r.Host {
+				return true
+			}
+		}
+		return false
+	}
+
+	conn, err := h.upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return fmt.Errorf("Could not Upgrade connection (%s)", err)
+	}
+	client := &WebSocketClient{
+		hub:            h,
+		conn:           conn,
+		send:           make(chan []byte, 256),
+		clientGUID:     clientGuid,
+		attributes:     clientAttributes,
+		connectRequest: r,
+		handler:        handler,
+	}
+	client.hub.register <- client
+	return nil
 }
 
 func (h *WebSocketHub) SendWithFilterSync(filterFunc func(clientGUID string, attrs *ClientAttributes) bool, message []byte, ctx context.Context) error {
@@ -139,13 +179,13 @@ func (h *WebSocketHub) Run() {
 			go client.writePump(h.ctx)
 			go client.readPump(h.ctx)
 			h.clientLock.Unlock()
-			if client.handler != nil && client.handler.WelcomeMessages != nil {
-				if welcomeMessages, err := (*client.handler.WelcomeMessages)(h, client.clientGUID, client.attributes, client.connectRequest); err == nil {
+			if client.handler.wsOpts.welcomeMessages != nil {
+				if welcomeMessages, err := (*client.handler.wsOpts.welcomeMessages)(h, client.clientGUID, client.attributes, client.connectRequest); err == nil {
 					for _, msg := range welcomeMessages {
 						client.send <- msg
 					}
 				} else {
-					config.CustomLog.Errorf("Could not generate welcomeMessage %v", err)
+					h.u.Log().Errorf("Could not generate welcomeMessage %v", err)
 				}
 			}
 		case client := <-h.unregister:
@@ -163,34 +203,28 @@ func (h *WebSocketHub) Run() {
 	}
 }
 
-func (h *WebSocketHub) Handle(pattern string, handler *Handler) {
-	// Add all middlewares, if handler is defined
-	if handler != nil {
-		h.u.ServeMux().Handle(pattern, handler.UhttpHandler.WsReady(h.u)(func(w http.ResponseWriter, r *http.Request) {
-			clientGuid := uuid.New().String()
-			attributes := NewClientAttributes()
-			var err error
-			if handler.ClientAttributes != nil {
-				attributes, err = (*handler.ClientAttributes)(h, r)
-				if err != nil {
-					h.u.RenderError(w, r, fmt.Errorf("could not get required attributes (%s)", err))
-					return
-				}
-			}
-			err = UpgradeConnection(h, handler, clientGuid, attributes, w, r)
+func (h *WebSocketHub) Handle(pattern string, handler Handler) {
+	h.u.ServeMux().Handle(pattern, handler.wsOpts.uhttpHandler.WsReady(h.u)(func(w http.ResponseWriter, r *http.Request) {
+		clientGuid := uuid.New().String()
+		attributes := NewClientAttributes()
+		var err error
+		if handler.wsOpts.clientAttributes != nil {
+			attributes, err = (*handler.wsOpts.clientAttributes)(h, r)
 			if err != nil {
-				h.u.RenderError(w, r, fmt.Errorf("could not upgrade connection (%s)", err))
+				h.u.RenderError(w, r, fmt.Errorf("could not get required attributes (%s)", err))
 				return
 			}
+		}
+		err = h.upgradeConnection(handler, clientGuid, attributes, w, r)
+		if err != nil {
+			h.u.RenderError(w, r, fmt.Errorf("could not upgrade connection (%s)", err))
+			return
+		}
 
-			if handler.OnConnect != nil {
-				(*handler.OnConnect)(h, clientGuid, attributes, r)
-			}
-		}))
-	} else {
-		h.u.ServeMux().HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-			config.CustomLog.LogIfError(UpgradeConnection(h, nil, uuid.New().String(), nil, w, r))
-		})
-	}
-	config.CustomLog.Infof("Registered WS at %s", pattern)
+		if handler.wsOpts.onConnect != nil {
+			(*handler.wsOpts.onConnect)(h, clientGuid, attributes, r)
+		}
+	}))
+
+	h.u.Log().Infof("Registered WS at %s", pattern)
 }
