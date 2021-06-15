@@ -48,12 +48,14 @@ type WebSocketClient struct {
 	clientGUID     string
 	attributes     *ClientAttributes
 
-	handler Handler
+	handler   Handler
+	ctx       context.Context
+	ctxCancel context.CancelFunc
 }
 
 func (c *WebSocketClient) handleError(err error) {
 	if c.handler.wsOpts.onError != nil {
-		(*c.handler.wsOpts.onError)(c.hub, c.clientGUID, c.attributes, c.connectRequest, err)
+		(*c.handler.wsOpts.onError)(c.hub, c.clientGUID, c.attributes, c.connectRequest, err, c.ctx)
 	} else {
 		c.hub.u.Log().Error(err)
 	}

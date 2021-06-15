@@ -65,13 +65,17 @@ func main() {
 		ws.WithClientAttributes(func(hub *ws.WebSocketHub, r *http.Request) (*ws.ClientAttributes, error) {
 			return ws.NewClientAttributes().SetString("testGuid", uuid.New().String()), nil
 		}),
-		ws.WithWelcomeMessages(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes *ws.ClientAttributes, r *http.Request) ([][]byte, error) {
+		ws.WithWelcomeMessages(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes *ws.ClientAttributes, r *http.Request, ctx context.Context) ([][]byte, error) {
+			go func() {
+				<-ctx.Done()
+				ulog.Infof("clientContext expired")
+			}()
 			return [][]byte{[]byte(fmt.Sprintf(`{"msg": "Welcome, %s"}`, clientGuid))}, nil
 		}),
-		ws.WithOnConnect(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes *ws.ClientAttributes, r *http.Request) {
+		ws.WithOnConnect(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes *ws.ClientAttributes, r *http.Request, ctx context.Context) {
 			ulog.Infof("Client connected %v", clientGuid)
 		}),
-		ws.WithOnDisconnect(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes *ws.ClientAttributes, r *http.Request, err error) {
+		ws.WithOnDisconnect(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes *ws.ClientAttributes, r *http.Request, err error, ctx context.Context) {
 			ulog.Infof("Client disonnected %v", clientGuid)
 		}),
 	))

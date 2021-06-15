@@ -68,7 +68,7 @@ func CreateHubAndRunInBackground(u *uhttp.UHTTP, messageHandler *chan ClientMess
 	return hub
 }
 
-func (h *WebSocketHub) upgradeConnection(handler Handler, clientGuid string, clientAttributes *ClientAttributes, w http.ResponseWriter, r *http.Request) error {
+func (h *WebSocketHub) upgradeConnection(handler Handler, clientGuid string, clientAttributes *ClientAttributes, w http.ResponseWriter, r *http.Request, clientContext context.Context, clientContextCancel context.CancelFunc) error {
 	h.upgrader.CheckOrigin = func(r *http.Request) bool {
 		if h.u.CORS() == "*" {
 			return true
@@ -93,6 +93,8 @@ func (h *WebSocketHub) upgradeConnection(handler Handler, clientGuid string, cli
 		attributes:     clientAttributes,
 		connectRequest: r,
 		handler:        handler,
+		ctx:            clientContext,
+		ctxCancel:      clientContextCancel,
 	}
 	client.hub.register <- client
 	return nil
@@ -170,6 +172,7 @@ func (h *WebSocketHub) Run() {
 			for _, client := range h.clients {
 				delete(h.clients, client.clientGUID)
 				close(client.send)
+				client.ctxCancel()
 			}
 			h.clientLock.Unlock()
 			return
@@ -180,7 +183,7 @@ func (h *WebSocketHub) Run() {
 			go client.readPump(h.ctx)
 			h.clientLock.Unlock()
 			if client.handler.wsOpts.welcomeMessages != nil {
-				if welcomeMessages, err := (*client.handler.wsOpts.welcomeMessages)(h, client.clientGUID, client.attributes, client.connectRequest); err == nil {
+				if welcomeMessages, err := (*client.handler.wsOpts.welcomeMessages)(h, client.clientGUID, client.attributes, client.connectRequest, client.ctx); err == nil {
 					for _, msg := range welcomeMessages {
 						client.send <- msg
 					}
@@ -193,6 +196,7 @@ func (h *WebSocketHub) Run() {
 			if _, ok := h.clients[client.clientGUID]; ok {
 				delete(h.clients, client.clientGUID)
 				close(client.send)
+				client.ctxCancel()
 			}
 			h.clientLock.Unlock()
 		case clientMessage := <-h.incomingMessages:
@@ -215,14 +219,16 @@ func (h *WebSocketHub) Handle(pattern string, handler Handler) {
 				return
 			}
 		}
-		err = h.upgradeConnection(handler, clientGuid, attributes, w, r)
+		clientContext, cancel := context.WithCancel(h.ctx)
+		err = h.upgradeConnection(handler, clientGuid, attributes, w, r, clientContext, cancel)
 		if err != nil {
 			h.u.RenderError(w, r, fmt.Errorf("could not upgrade connection (%s)", err))
+			cancel()
 			return
 		}
 
 		if handler.wsOpts.onConnect != nil {
-			(*handler.wsOpts.onConnect)(h, clientGuid, attributes, r)
+			(*handler.wsOpts.onConnect)(h, clientGuid, attributes, r, clientContext)
 		}
 	}))
 
