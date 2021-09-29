@@ -116,6 +116,22 @@ func (h *WebSocketHub) SendWithFilterSync(filterFunc func(clientGUID string, att
 	return nil
 }
 
+func (h *WebSocketHub) SendWithFilterAsync(filterFunc func(clientGUID string, attrs *ClientAttributes) bool, message []byte, ctx context.Context) {
+	h.clientLock.Lock()
+	defer h.clientLock.Unlock()
+
+	for _, client := range h.clients {
+		if filterFunc(client.clientGUID, client.attributes) {
+			go func() {
+				select {
+				case client.send <- message:
+				case <-ctx.Done():
+				}
+			}()
+		}
+	}
+}
+
 func (h *WebSocketHub) SendToAllWithFlagSync(flag string, message []byte, ctx context.Context) error {
 	h.clientLock.Lock()
 	defer h.clientLock.Unlock()
@@ -132,6 +148,22 @@ func (h *WebSocketHub) SendToAllWithFlagSync(flag string, message []byte, ctx co
 	return nil
 }
 
+func (h *WebSocketHub) SendToAllWithFlagAsync(flag string, message []byte, ctx context.Context) {
+	h.clientLock.Lock()
+	defer h.clientLock.Unlock()
+
+	for _, client := range h.clients {
+		if client.attributes.IsFlagSet(flag) {
+			go func() {
+				select {
+				case client.send <- message:
+				case <-ctx.Done():
+				}
+			}()
+		}
+	}
+}
+
 func (h *WebSocketHub) SendToAllWithMatchSync(key string, value string, message []byte, ctx context.Context) error {
 	h.clientLock.Lock()
 	defer h.clientLock.Unlock()
@@ -146,6 +178,22 @@ func (h *WebSocketHub) SendToAllWithMatchSync(key string, value string, message 
 		}
 	}
 	return nil
+}
+
+func (h *WebSocketHub) SendToAllWithMatchAsync(key string, value string, message []byte, ctx context.Context) {
+	h.clientLock.Lock()
+	defer h.clientLock.Unlock()
+
+	for _, client := range h.clients {
+		if client.attributes.HasMatch(key, value) {
+			go func() {
+				select {
+				case client.send <- message:
+				case <-ctx.Done():
+				}
+			}()
+		}
+	}
 }
 
 func (h *WebSocketHub) SendToClientSync(clientGUID string, message []byte, ctx context.Context) error {
