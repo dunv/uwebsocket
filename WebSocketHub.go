@@ -122,12 +122,12 @@ func (h *WebSocketHub) SendWithFilterAsync(filterFunc func(clientGUID string, at
 
 	for _, client := range h.clients {
 		if filterFunc(client.clientGUID, client.attributes) {
-			go func() {
+			go func(client *WebSocketClient) {
 				select {
 				case client.send <- message:
 				case <-ctx.Done():
 				}
-			}()
+			}(client)
 		}
 	}
 }
@@ -154,12 +154,12 @@ func (h *WebSocketHub) SendToAllWithFlagAsync(flag string, message []byte, ctx c
 
 	for _, client := range h.clients {
 		if client.attributes.IsFlagSet(flag) {
-			go func() {
+			go func(client *WebSocketClient) {
 				select {
 				case client.send <- message:
 				case <-ctx.Done():
 				}
-			}()
+			}(client)
 		}
 	}
 }
@@ -186,12 +186,12 @@ func (h *WebSocketHub) SendToAllWithMatchAsync(key string, value string, message
 
 	for _, client := range h.clients {
 		if client.attributes.HasMatch(key, value) {
-			go func() {
+			go func(client *WebSocketClient) {
 				select {
 				case client.send <- message:
 				case <-ctx.Done():
 				}
-			}()
+			}(client)
 		}
 	}
 }
