@@ -12,12 +12,12 @@ type HandlerOption interface {
 }
 
 type handlerOptions struct {
-	uhttpHandler     uhttp.Handler
-	clientAttributes *func(hub *WebSocketHub, r *http.Request) (*ClientAttributes, error)
-	welcomeMessages  *func(hub *WebSocketHub, clientGuid string, clientAttributes *ClientAttributes, r *http.Request, ctx context.Context) ([][]byte, error)
-	onConnect        *func(hub *WebSocketHub, clientGuid string, clientAttributes *ClientAttributes, r *http.Request, ctx context.Context)
-	onDisconnect     *func(hub *WebSocketHub, clientGuid string, clientAttributes *ClientAttributes, r *http.Request, err error, ctx context.Context)
-	onError          *func(hub *WebSocketHub, clientGuid string, clientAttributes *ClientAttributes, r *http.Request, err error, ctx context.Context)
+	uhttpHandler      uhttp.Handler
+	clientAttributes  *func(hub *WebSocketHub, r *http.Request) (*ClientAttributes, error)
+	welcomeMessages   *func(hub *WebSocketHub, clientGuid string, clientAttributes *ClientAttributes, r *http.Request, ctx context.Context) ([][]byte, error)
+	onConnect         *func(hub *WebSocketHub, clientGuid string, clientAttributes *ClientAttributes, r *http.Request, ctx context.Context)
+	onError           *func(hub *WebSocketHub, clientGuid string, clientAttributes *ClientAttributes, r *http.Request, err error, ctx context.Context)
+	onIncomingMessage *func(hub *WebSocketHub, clientGuid string, clientAttributes *ClientAttributes, r *http.Request, msg ClientMessage, ctx context.Context)
 }
 type funcHandlerOption struct {
 	f func(*handlerOptions)
@@ -55,14 +55,14 @@ func WithOnConnect(f func(hub *WebSocketHub, clientGuid string, clientAttributes
 	})
 }
 
-func WithOnDisconnect(f func(hub *WebSocketHub, clientGuid string, clientAttributes *ClientAttributes, r *http.Request, err error, ctx context.Context)) HandlerOption {
-	return newFuncHandlerOption(func(o *handlerOptions) {
-		o.onDisconnect = &f
-	})
-}
-
 func WithOnError(f func(hub *WebSocketHub, clientGuid string, clientAttributes *ClientAttributes, r *http.Request, err error, ctx context.Context)) HandlerOption {
 	return newFuncHandlerOption(func(o *handlerOptions) {
 		o.onError = &f
+	})
+}
+
+func WithOnIncomingMessage(f func(hub *WebSocketHub, clientGuid string, clientAttributes *ClientAttributes, r *http.Request, msg ClientMessage, ctx context.Context)) HandlerOption {
+	return newFuncHandlerOption(func(o *handlerOptions) {
+		o.onIncomingMessage = &f
 	})
 }

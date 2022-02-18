@@ -25,19 +25,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	textInboundMessages := make(chan ws.ClientMessage)
-	textHub := ws.CreateHubAndRunInBackground(u, &textInboundMessages, websocket.TextMessage, ctx)
-	go func() {
-		for inboundMessage := range textInboundMessages {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			ulog.LogIfError(textHub.SendToClientSync(
-				inboundMessage.ClientGUID,
-				[]byte(fmt.Sprintf(`{ "msg": "response to %s" }`, inboundMessage.Message)),
-				ctx,
-			))
-			cancel()
-		}
-	}()
+	textHub := ws.CreateHubAndRunInBackground(u, websocket.TextMessage, ctx)
 	go func() {
 		for {
 			input := ""
@@ -74,9 +62,13 @@ func main() {
 		}),
 		ws.WithOnConnect(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes *ws.ClientAttributes, r *http.Request, ctx context.Context) {
 			ulog.Infof("Client connected %v", clientGuid)
+			go func() {
+				<-ctx.Done()
+				ulog.Infof("Client disconnected %v", clientGuid)
+			}()
 		}),
-		ws.WithOnDisconnect(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes *ws.ClientAttributes, r *http.Request, err error, ctx context.Context) {
-			ulog.Infof("Client disonnected %v", clientGuid)
+		ws.WithOnIncomingMessage(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes *ws.ClientAttributes, r *http.Request, msg ws.ClientMessage, ctx context.Context) {
+			ulog.Infof("Received msg %s", msg.Message)
 		}),
 	))
 

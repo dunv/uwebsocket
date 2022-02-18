@@ -24,8 +24,9 @@ type WebSocketHub struct {
 	unregister       chan *WebSocketClient
 	incomingMessages chan ClientMessage
 
-	// if the user wants to receive messages, this channel needs to be not nil
-	messageHandler *chan ClientMessage
+	// map[clientGUID]chan ClientMessage
+	messageHandlers     map[string]func(ClientMessage)
+	messageHandlersLock *sync.Mutex
 
 	u *uhttp.UHTTP
 
@@ -42,13 +43,12 @@ type WebSocketHub struct {
 	ctx context.Context
 }
 
-func NewWebSocketHub(u *uhttp.UHTTP, messagHandler *chan ClientMessage, messageType int, ctx context.Context) *WebSocketHub {
+func NewWebSocketHub(u *uhttp.UHTTP, messageType int, ctx context.Context) *WebSocketHub {
 	return &WebSocketHub{
 		register:         make(chan *WebSocketClient),
 		unregister:       make(chan *WebSocketClient),
 		clients:          make(map[string]*WebSocketClient),
 		incomingMessages: make(chan ClientMessage),
-		messageHandler:   messagHandler,
 		u:                u,
 		clientLock:       &sync.Mutex{},
 		messageType:      messageType,
@@ -57,11 +57,13 @@ func NewWebSocketHub(u *uhttp.UHTTP, messagHandler *chan ClientMessage, messageT
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
 		},
+		messageHandlers:     make(map[string]func(ClientMessage)),
+		messageHandlersLock: &sync.Mutex{},
 	}
 }
 
-func CreateHubAndRunInBackground(u *uhttp.UHTTP, messageHandler *chan ClientMessage, messageType int, ctx context.Context) *WebSocketHub {
-	hub := NewWebSocketHub(u, messageHandler, messageType, ctx)
+func CreateHubAndRunInBackground(u *uhttp.UHTTP, messageType int, ctx context.Context) *WebSocketHub {
+	hub := NewWebSocketHub(u, messageType, ctx)
 	go func() {
 		hub.Run()
 	}()
@@ -248,9 +250,16 @@ func (h *WebSocketHub) Run() {
 			}
 			h.clientLock.Unlock()
 		case clientMessage := <-h.incomingMessages:
-			if h.messageHandler != nil {
-				*h.messageHandler <- clientMessage
+			h.messageHandlersLock.Lock()
+			fmt.Println("going through")
+			for clientGUID, handler := range h.messageHandlers {
+				fmt.Println("clientGUID", clientGUID)
+				if clientMessage.ClientGUID == clientGUID {
+					fmt.Println("match")
+					handler(clientMessage)
+				}
 			}
+			h.messageHandlersLock.Unlock()
 		}
 	}
 }
@@ -273,6 +282,15 @@ func (h *WebSocketHub) Handle(pattern string, handler Handler) {
 			h.u.RenderError(w, r, fmt.Errorf("could not upgrade connection (%s)", err))
 			cancel()
 			return
+		}
+
+		if handler.wsOpts.onIncomingMessage != nil {
+			fmt.Println("registered")
+			h.messageHandlersLock.Lock()
+			h.messageHandlers[clientGuid] = func(msg ClientMessage) {
+				(*handler.wsOpts.onIncomingMessage)(h, clientGuid, attributes, r, msg, clientContext)
+			}
+			h.messageHandlersLock.Unlock()
 		}
 
 		if handler.wsOpts.onConnect != nil {

@@ -115,9 +115,8 @@ func (c *WebSocketClient) readPump(ctx context.Context) {
 		}
 
 		c.hub.incomingMessages <- ClientMessage{
-			ClientAttributes: c.attributes,
-			ClientGUID:       c.clientGUID,
-			Message:          message,
+			ClientGUID: c.clientGUID,
+			Message:    message,
 		}
 	}
 }
