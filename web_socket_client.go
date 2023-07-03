@@ -57,7 +57,7 @@ func (c *WebSocketClient) handleError(err error) {
 	if c.handler.wsOpts.onError != nil {
 		(*c.handler.wsOpts.onError)(c.hub, c.clientGUID, c.attributes, c.connectRequest, err, c.ctx)
 	} else {
-		c.hub.u.Log().Error(err)
+		c.hub.u.Log().Errorf("%s", err)
 	}
 }
 

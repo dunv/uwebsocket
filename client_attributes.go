@@ -3,10 +3,10 @@ package uwebsocket
 import (
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/dunv/uhelpers"
-	"github.com/dunv/ulog"
 )
 
 var KEY_DOES_NOT_EXIST_ERR = errors.New("key does not exist")
@@ -70,7 +70,7 @@ func (c *ClientAttributes) String() string {
 		case *bool:
 			out = append(out, fmt.Sprintf("%s: %t", k, *typed))
 		default:
-			ulog.Warnf("")
+			log.Printf("uwebsocket.ClientAttributes: unknown type %T\n", typed)
 		}
 	}
 	return strings.Join(out, ", ")

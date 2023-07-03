@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/dunv/uhttp"
-	"github.com/dunv/ulog"
 	ws "github.com/dunv/uwebsocket"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -31,21 +30,24 @@ func main() {
 			input := ""
 			_, err := fmt.Scanln(&input)
 			if err != nil {
-				ulog.Errorf("could not scan (%s)", err)
+				u.Log().Errorf("could not scan (%s)", err)
 				continue
 			}
-			ulog.Infof("scanned %s", input)
+			u.Log().Infof("scanned %s", input)
 
 			marshaled, err := json.Marshal(map[string]string{"received": input})
 			if err != nil {
-				ulog.Errorf("could not marshal (%s)", err)
+				u.Log().Errorf("could not marshal (%s)", err)
 				continue
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			ulog.LogIfError(textHub.SendWithFilterSync(func(clientGUID string, attrs *ws.ClientAttributes) bool {
+			if err := textHub.SendWithFilterSync(func(clientGUID string, attrs *ws.ClientAttributes) bool {
 				return true
-			}, marshaled, ctx))
+			}, marshaled, ctx); err != nil {
+				u.Log().Errorf("%s", err)
+			}
+
 			cancel()
 		}
 	}()
@@ -56,21 +58,23 @@ func main() {
 		ws.WithWelcomeMessages(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes *ws.ClientAttributes, r *http.Request, ctx context.Context) ([][]byte, error) {
 			go func() {
 				<-ctx.Done()
-				ulog.Infof("clientContext expired")
+				u.Log().Infof("clientContext expired")
 			}()
 			return [][]byte{[]byte(fmt.Sprintf(`{"msg": "Welcome, %s"}`, clientGuid))}, nil
 		}),
 		ws.WithOnConnect(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes *ws.ClientAttributes, r *http.Request, ctx context.Context) {
-			ulog.Infof("Client connected %v", clientGuid)
+			u.Log().Infof("Client connected %v", clientGuid)
 			go func() {
 				<-ctx.Done()
-				ulog.Infof("Client disconnected %v", clientGuid)
+				u.Log().Infof("Client disconnected %v", clientGuid)
 			}()
 		}),
 		ws.WithOnIncomingMessage(func(hub *ws.WebSocketHub, clientGuid string, clientAttributes *ws.ClientAttributes, r *http.Request, msg ws.ClientMessage, ctx context.Context) {
-			ulog.Infof("Received msg %s", msg.Message)
+			u.Log().Infof("Received msg %s", msg.Message)
 		}),
 	))
 
-	ulog.Fatal(u.ListenAndServe()) // need to investigate, why does this not work with localhost
+	if err := u.ListenAndServe(); err != nil { // need to investigate, why does this not work with localhost
+		u.Log().Errorf("%s", err)
+	}
 }
