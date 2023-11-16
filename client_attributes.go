@@ -23,7 +23,7 @@ func NewClientAttributes() *ClientAttributes {
 }
 
 func (c *ClientAttributes) SetString(key string, value string) *ClientAttributes {
-	c.attrs[key] = uhelpers.PtrToString(value)
+	c.attrs[key] = uhelpers.Ptr(value)
 	return c
 }
 
@@ -38,7 +38,7 @@ func (c *ClientAttributes) GetString(key string) (string, error) {
 }
 
 func (c *ClientAttributes) SetBool(key string, value bool) *ClientAttributes {
-	c.attrs[key] = uhelpers.PtrToBool(value)
+	c.attrs[key] = uhelpers.Ptr(value)
 	return c
 }
 
@@ -53,11 +53,11 @@ func (c *ClientAttributes) GetBool(key string) (bool, error) {
 }
 
 func (c *ClientAttributes) IsFlagSet(key string) bool {
-	return uhelpers.IsMatchingBoolPointerInMap(uhelpers.PtrToBool(true), c.attrs, key)
+	return uhelpers.IsMatchingBoolPointerInMap(uhelpers.Ptr(true), c.attrs, key)
 }
 
 func (c *ClientAttributes) HasMatch(key string, value string) bool {
-	val := uhelpers.IsMatchingStringPointerInMap(uhelpers.PtrToString(value), c.attrs, key)
+	val := uhelpers.IsMatchingStringPointerInMap(uhelpers.Ptr(value), c.attrs, key)
 	return val
 }
 
