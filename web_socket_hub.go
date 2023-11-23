@@ -102,6 +102,19 @@ func (h *WebSocketHub) upgradeConnection(handler Handler, clientGuid string, cli
 	return nil
 }
 
+func (h *WebSocketHub) CountClientsWithFilter(filterFunc func(clientGUID string, attrs *ClientAttributes) bool) int {
+	h.clientLock.Lock()
+	defer h.clientLock.Unlock()
+
+	count := 0
+	for _, client := range h.clients {
+		if filterFunc(client.clientGUID, client.attributes) {
+			count++
+		}
+	}
+	return count
+}
+
 func (h *WebSocketHub) SendWithFilterSync(filterFunc func(clientGUID string, attrs *ClientAttributes) bool, message []byte, ctx context.Context) error {
 	h.clientLock.Lock()
 	defer h.clientLock.Unlock()
