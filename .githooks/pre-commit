@@ -23,7 +23,7 @@ fi
 printf "${LIME_YELLOW}Running golangci-lint on all staged *.go files...${NORMAL}\n"
 
 OLD=$(pwd)
-cd $(git rev-parse --show-toplevel)/src
+cd $(git rev-parse --show-toplevel)/
 
 golangci-lint run 
 if [[ $? != 0 ]]; then

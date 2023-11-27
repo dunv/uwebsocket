@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -116,7 +117,7 @@ func (h *WebSocketHub) CountClientsWithFilter(filterFunc func(clientGUID string,
 	return count
 }
 
-func (h *WebSocketHub) Send(ctx context.Context, opts ...SendOption) error {
+func (h *WebSocketHub) Send(ctx context.Context, opts ...SendOption) {
 	sendOpts := &sendOptions{
 		filterFn: func(clientGUID string, attrs *ClientAttributes) bool { return true },
 		async:    false,
@@ -125,7 +126,8 @@ func (h *WebSocketHub) Send(ctx context.Context, opts ...SendOption) error {
 		opt(sendOpts)
 	}
 	if sendOpts.messageFn == nil {
-		return errors.New("no messageFn specified")
+		slog.Error("uwebsocket: err no message or messageFn specified")
+		return
 	}
 
 	h.clientLock.Lock()
@@ -136,9 +138,7 @@ func (h *WebSocketHub) Send(ctx context.Context, opts ...SendOption) error {
 		if sendOpts.filterFn(client.clientGUID, client.attributes) {
 			msg, err := sendOpts.messageFn(client.clientGUID, client.attributes)
 			if err != nil {
-				if !sendOpts.async {
-					return err
-				}
+				slog.Error("uwebsocket: err generating msg: %w", err)
 				continue
 			}
 
@@ -149,16 +149,15 @@ func (h *WebSocketHub) Send(ctx context.Context, opts ...SendOption) error {
 					case <-ctx.Done():
 					}
 				}()
-			} else {
-				select {
-				case client.send <- msg:
-				case <-ctx.Done():
-					return context.DeadlineExceeded
-				}
+				continue
+			}
+
+			select {
+			case client.send <- msg:
+			case <-ctx.Done():
 			}
 		}
 	}
-	return nil
 }
 
 func (h *WebSocketHub) SendWithFilterSync(filterFunc func(clientGUID string, attrs *ClientAttributes) bool, message []byte, ctx context.Context) error {
