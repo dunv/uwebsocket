@@ -107,7 +107,8 @@ func (h *WebSocketHub) CountClientsWithFilter(filterFunc func(clientGUID string,
 	defer h.clientLock.Unlock()
 
 	count := 0
-	for _, client := range h.clients {
+	for i := range h.clients {
+		client := h.clients[i]
 		if filterFunc(client.clientGUID, client.attributes) {
 			count++
 		}
@@ -115,11 +116,58 @@ func (h *WebSocketHub) CountClientsWithFilter(filterFunc func(clientGUID string,
 	return count
 }
 
+func (h *WebSocketHub) Send(ctx context.Context, opts ...SendOption) error {
+	sendOpts := &sendOptions{
+		filterFn: func(clientGUID string, attrs *ClientAttributes) bool { return true },
+		async:    false,
+	}
+	for _, opt := range opts {
+		opt(sendOpts)
+	}
+	if sendOpts.messageFn == nil {
+		return errors.New("no messageFn specified")
+	}
+
+	h.clientLock.Lock()
+	defer h.clientLock.Unlock()
+
+	for i := range h.clients {
+		client := h.clients[i]
+		if sendOpts.filterFn(client.clientGUID, client.attributes) {
+			msg, err := sendOpts.messageFn(client.clientGUID, client.attributes)
+			if err != nil {
+				if !sendOpts.async {
+					return err
+				}
+				continue
+			}
+
+			if sendOpts.async {
+				go func() {
+					select {
+					case client.send <- msg:
+					case <-ctx.Done():
+					}
+				}()
+			} else {
+				select {
+				case client.send <- msg:
+				case <-ctx.Done():
+					return context.DeadlineExceeded
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func (h *WebSocketHub) SendWithFilterSync(filterFunc func(clientGUID string, attrs *ClientAttributes) bool, message []byte, ctx context.Context) error {
 	h.clientLock.Lock()
 	defer h.clientLock.Unlock()
 
-	for _, client := range h.clients {
+	for i := range h.clients {
+		client := h.clients[i]
+
 		if filterFunc(client.clientGUID, client.attributes) {
 			select {
 			case client.send <- message:
@@ -135,7 +183,9 @@ func (h *WebSocketHub) SendWithFilterAsync(filterFunc func(clientGUID string, at
 	h.clientLock.Lock()
 	defer h.clientLock.Unlock()
 
-	for _, client := range h.clients {
+	for i := range h.clients {
+		client := h.clients[i]
+
 		if filterFunc(client.clientGUID, client.attributes) {
 			go func(client *WebSocketClient) {
 				select {
@@ -151,7 +201,9 @@ func (h *WebSocketHub) SendToAllWithFlagSync(flag string, message []byte, ctx co
 	h.clientLock.Lock()
 	defer h.clientLock.Unlock()
 
-	for _, client := range h.clients {
+	for i := range h.clients {
+		client := h.clients[i]
+
 		if client.attributes.IsFlagSet(flag) {
 			select {
 			case client.send <- message:
@@ -167,7 +219,9 @@ func (h *WebSocketHub) SendToAllWithFlagAsync(flag string, message []byte, ctx c
 	h.clientLock.Lock()
 	defer h.clientLock.Unlock()
 
-	for _, client := range h.clients {
+	for i := range h.clients {
+		client := h.clients[i]
+
 		if client.attributes.IsFlagSet(flag) {
 			go func(client *WebSocketClient) {
 				select {
@@ -183,7 +237,9 @@ func (h *WebSocketHub) SendToAllWithMatchSync(key string, value string, message 
 	h.clientLock.Lock()
 	defer h.clientLock.Unlock()
 
-	for _, client := range h.clients {
+	for i := range h.clients {
+		client := h.clients[i]
+
 		if client.attributes.HasMatch(key, value) {
 			select {
 			case client.send <- message:
@@ -199,7 +255,9 @@ func (h *WebSocketHub) SendToAllWithMatchAsync(key string, value string, message
 	h.clientLock.Lock()
 	defer h.clientLock.Unlock()
 
-	for _, client := range h.clients {
+	for i := range h.clients {
+		client := h.clients[i]
+
 		if client.attributes.HasMatch(key, value) {
 			go func(client *WebSocketClient) {
 				select {
