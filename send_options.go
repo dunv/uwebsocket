@@ -2,7 +2,6 @@ package uwebsocket
 
 type sendOptions struct {
 	messageFn func() ([]byte, error)
-	async     bool
 	filterFn  func(clientGUID string, attrs *ClientAttributes) bool
 }
 
@@ -30,9 +29,26 @@ func WithFilterFn(fn func(clientGUID string, attrs *ClientAttributes) bool) Send
 	}
 }
 
-// Send the message asynchronously
-func WithAsync() SendOption {
+func WithFlagFilter(flag string) SendOption {
 	return func(o *sendOptions) {
-		o.async = true
+		o.filterFn = func(clientGUID string, attrs *ClientAttributes) bool {
+			return attrs.IsFlagSet(flag)
+		}
+	}
+}
+
+func WithMatchFilter(key string, value string) SendOption {
+	return func(o *sendOptions) {
+		o.filterFn = func(clientGUID string, attrs *ClientAttributes) bool {
+			return attrs.HasMatch(key, value)
+		}
+	}
+}
+
+func WithClientFilter(clientGUID string) SendOption {
+	return func(o *sendOptions) {
+		o.filterFn = func(guid string, attrs *ClientAttributes) bool {
+			return guid == clientGUID
+		}
 	}
 }

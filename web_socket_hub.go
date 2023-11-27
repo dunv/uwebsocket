@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -20,9 +19,9 @@ import (
 var ErrClientNotFound = errors.New("client not found")
 
 type WebSocketHub struct {
-	clients          map[string]*WebSocketClient
-	register         chan *WebSocketClient
-	unregister       chan *WebSocketClient
+	clients          map[string]WebSocketClient
+	register         chan WebSocketClient
+	unregister       chan WebSocketClient
 	incomingMessages chan ClientMessage
 
 	// map[clientGUID]chan ClientMessage
@@ -42,13 +41,16 @@ type WebSocketHub struct {
 
 	// this context can cancel the run-routine
 	ctx context.Context
+
+	// how many messages were discarded because the client-buffer was full
+	discardedMessages int64
 }
 
 func NewWebSocketHub(u *uhttp.UHTTP, messageType int, ctx context.Context) *WebSocketHub {
 	return &WebSocketHub{
-		register:         make(chan *WebSocketClient),
-		unregister:       make(chan *WebSocketClient),
-		clients:          make(map[string]*WebSocketClient),
+		register:         make(chan WebSocketClient),
+		unregister:       make(chan WebSocketClient),
+		clients:          make(map[string]WebSocketClient),
 		incomingMessages: make(chan ClientMessage),
 		u:                u,
 		clientLock:       &sync.Mutex{},
@@ -88,7 +90,7 @@ func (h *WebSocketHub) upgradeConnection(handler Handler, clientGuid string, cli
 	if err != nil {
 		return fmt.Errorf("Could not Upgrade connection (%s)", err)
 	}
-	client := &WebSocketClient{
+	client := &webSocketClient{
 		hub:            h,
 		conn:           conn,
 		send:           make(chan []byte, 256),
@@ -110,7 +112,7 @@ func (h *WebSocketHub) CountClientsWithFilter(filterFunc func(clientGUID string,
 	count := 0
 	for i := range h.clients {
 		client := h.clients[i]
-		if filterFunc(client.clientGUID, client.attributes) {
+		if filterFunc(client.ClientGUID(), client.Attributes()) {
 			count++
 		}
 	}
@@ -120,13 +122,12 @@ func (h *WebSocketHub) CountClientsWithFilter(filterFunc func(clientGUID string,
 func (h *WebSocketHub) Send(ctx context.Context, opts ...SendOption) {
 	sendOpts := &sendOptions{
 		filterFn: func(clientGUID string, attrs *ClientAttributes) bool { return true },
-		async:    false,
 	}
 	for _, opt := range opts {
 		opt(sendOpts)
 	}
 	if sendOpts.messageFn == nil {
-		slog.Error("uwebsocket: err no message or messageFn specified")
+		h.u.Log().Errorf("uwebsocket: err no message or messageFn specified")
 		return
 	}
 
@@ -141,7 +142,7 @@ func (h *WebSocketHub) Send(ctx context.Context, opts ...SendOption) {
 
 	for i := range h.clients {
 		client := h.clients[i]
-		if sendOpts.filterFn(client.clientGUID, client.attributes) {
+		if sendOpts.filterFn(client.ClientGUID(), client.Attributes()) {
 			// if message generation already failed once, the error was logged and can be skipped this time around
 			if generatedErr != nil {
 				continue
@@ -151,152 +152,21 @@ func (h *WebSocketHub) Send(ctx context.Context, opts ...SendOption) {
 			if generatedMessage == nil {
 				generatedMessage, generatedErr = sendOpts.messageFn()
 				if generatedErr != nil {
-					slog.Error("uwebsocket: err generating msg: %w", generatedErr)
+					h.u.Log().Errorf("uwebsocket: err generating msg: %w", generatedErr)
 					generatedMessage = []byte{}
 					continue
 				}
 			}
 
-			if sendOpts.async {
-				go func() {
-					select {
-					case client.send <- generatedMessage:
-					case <-ctx.Done():
-					}
-				}()
-				continue
-			}
-
+			// send synchronously here, as messages are buffered in the client
 			select {
-			case client.send <- generatedMessage:
-			case <-ctx.Done():
+			case client.SendChan() <- generatedMessage:
+			default:
+				h.discardedMessages++
+				h.u.Log().Errorf("uwebsocket: buffer for client %s full, skipping msg", client.ClientGUID())
 			}
 		}
 	}
-}
-
-func (h *WebSocketHub) SendWithFilterSync(filterFunc func(clientGUID string, attrs *ClientAttributes) bool, message []byte, ctx context.Context) error {
-	h.clientLock.Lock()
-	defer h.clientLock.Unlock()
-
-	for i := range h.clients {
-		client := h.clients[i]
-
-		if filterFunc(client.clientGUID, client.attributes) {
-			select {
-			case client.send <- message:
-			case <-ctx.Done():
-				return context.DeadlineExceeded
-			}
-		}
-	}
-	return nil
-}
-
-func (h *WebSocketHub) SendWithFilterAsync(filterFunc func(clientGUID string, attrs *ClientAttributes) bool, message []byte, ctx context.Context) {
-	h.clientLock.Lock()
-	defer h.clientLock.Unlock()
-
-	for i := range h.clients {
-		client := h.clients[i]
-
-		if filterFunc(client.clientGUID, client.attributes) {
-			go func(client *WebSocketClient) {
-				select {
-				case client.send <- message:
-				case <-ctx.Done():
-				}
-			}(client)
-		}
-	}
-}
-
-func (h *WebSocketHub) SendToAllWithFlagSync(flag string, message []byte, ctx context.Context) error {
-	h.clientLock.Lock()
-	defer h.clientLock.Unlock()
-
-	for i := range h.clients {
-		client := h.clients[i]
-
-		if client.attributes.IsFlagSet(flag) {
-			select {
-			case client.send <- message:
-			case <-ctx.Done():
-				return context.DeadlineExceeded
-			}
-		}
-	}
-	return nil
-}
-
-func (h *WebSocketHub) SendToAllWithFlagAsync(flag string, message []byte, ctx context.Context) {
-	h.clientLock.Lock()
-	defer h.clientLock.Unlock()
-
-	for i := range h.clients {
-		client := h.clients[i]
-
-		if client.attributes.IsFlagSet(flag) {
-			go func(client *WebSocketClient) {
-				select {
-				case client.send <- message:
-				case <-ctx.Done():
-				}
-			}(client)
-		}
-	}
-}
-
-func (h *WebSocketHub) SendToAllWithMatchSync(key string, value string, message []byte, ctx context.Context) error {
-	h.clientLock.Lock()
-	defer h.clientLock.Unlock()
-
-	for i := range h.clients {
-		client := h.clients[i]
-
-		if client.attributes.HasMatch(key, value) {
-			select {
-			case client.send <- message:
-			case <-ctx.Done():
-				return context.DeadlineExceeded
-			}
-		}
-	}
-	return nil
-}
-
-func (h *WebSocketHub) SendToAllWithMatchAsync(key string, value string, message []byte, ctx context.Context) {
-	h.clientLock.Lock()
-	defer h.clientLock.Unlock()
-
-	for i := range h.clients {
-		client := h.clients[i]
-
-		if client.attributes.HasMatch(key, value) {
-			go func(client *WebSocketClient) {
-				select {
-				case client.send <- message:
-				case <-ctx.Done():
-				}
-			}(client)
-		}
-	}
-}
-
-func (h *WebSocketHub) SendToClientSync(clientGUID string, message []byte, ctx context.Context) error {
-	h.clientLock.Lock()
-	defer h.clientLock.Unlock()
-
-	if client, ok := h.clients[clientGUID]; ok {
-		select {
-		case client.send <- message:
-			return nil
-		case <-ctx.Done():
-			return context.DeadlineExceeded
-		}
-	}
-
-	return ErrClientNotFound
 }
 
 func (h *WebSocketHub) Run() {
@@ -305,22 +175,21 @@ func (h *WebSocketHub) Run() {
 		case <-h.ctx.Done():
 			h.clientLock.Lock()
 			for _, client := range h.clients {
-				delete(h.clients, client.clientGUID)
-				close(client.send)
-				client.ctxCancel()
+				delete(h.clients, client.ClientGUID())
+				close(client.SendChan())
+				client.Cancel()
 			}
 			h.clientLock.Unlock()
 			return
 		case client := <-h.register:
 			h.clientLock.Lock()
-			h.clients[client.clientGUID] = client
-			go client.writePump(h.ctx)
-			go client.readPump(h.ctx)
+			h.clients[client.ClientGUID()] = client
+			client.Run(h.ctx)
 			h.clientLock.Unlock()
-			if client.handler.wsOpts.welcomeMessages != nil {
-				if welcomeMessages, err := (*client.handler.wsOpts.welcomeMessages)(h, client.clientGUID, client.attributes, client.connectRequest, client.ctx); err == nil {
+			if client.Handler().wsOpts.welcomeMessages != nil {
+				if welcomeMessages, err := (*client.Handler().wsOpts.welcomeMessages)(h, client.ClientGUID(), client.Attributes(), client.Request(), client.Ctx()); err == nil {
 					for _, msg := range welcomeMessages {
-						client.send <- msg
+						client.SendChan() <- msg
 					}
 				} else {
 					h.u.Log().Errorf("Could not generate welcomeMessage %v", err)
@@ -328,19 +197,16 @@ func (h *WebSocketHub) Run() {
 			}
 		case client := <-h.unregister:
 			h.clientLock.Lock()
-			if _, ok := h.clients[client.clientGUID]; ok {
-				delete(h.clients, client.clientGUID)
-				close(client.send)
-				client.ctxCancel()
+			if _, ok := h.clients[client.ClientGUID()]; ok {
+				delete(h.clients, client.ClientGUID())
+				close(client.SendChan())
+				client.Cancel()
 			}
 			h.clientLock.Unlock()
 		case clientMessage := <-h.incomingMessages:
 			h.messageHandlersLock.Lock()
-			fmt.Println("going through")
 			for clientGUID, handler := range h.messageHandlers {
-				fmt.Println("clientGUID", clientGUID)
 				if clientMessage.ClientGUID == clientGUID {
-					fmt.Println("match")
 					handler(clientMessage)
 				}
 			}
@@ -370,7 +236,6 @@ func (h *WebSocketHub) Handle(pattern string, handler Handler) {
 		}
 
 		if handler.wsOpts.onIncomingMessage != nil {
-			fmt.Println("registered")
 			h.messageHandlersLock.Lock()
 			h.messageHandlers[clientGuid] = func(msg ClientMessage) {
 				(*handler.wsOpts.onIncomingMessage)(h, clientGuid, attributes, r, msg, clientContext)
