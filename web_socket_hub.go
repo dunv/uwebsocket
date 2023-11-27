@@ -133,19 +133,34 @@ func (h *WebSocketHub) Send(ctx context.Context, opts ...SendOption) {
 	h.clientLock.Lock()
 	defer h.clientLock.Unlock()
 
+	// Cache generated message, this way the message-callback
+	// - is only called if there is at least one filter-match
+	// - is only called once for all clients
+	var generatedMessage []byte = nil
+	var generatedErr error
+
 	for i := range h.clients {
 		client := h.clients[i]
 		if sendOpts.filterFn(client.clientGUID, client.attributes) {
-			msg, err := sendOpts.messageFn(client.clientGUID, client.attributes)
-			if err != nil {
-				slog.Error("uwebsocket: err generating msg: %w", err)
+			// if message generation already failed once, the error was logged and can be skipped this time around
+			if generatedErr != nil {
 				continue
+			}
+
+			// message was never generated -> do it here
+			if generatedMessage == nil {
+				generatedMessage, generatedErr = sendOpts.messageFn()
+				if generatedErr != nil {
+					slog.Error("uwebsocket: err generating msg: %w", generatedErr)
+					generatedMessage = []byte{}
+					continue
+				}
 			}
 
 			if sendOpts.async {
 				go func() {
 					select {
-					case client.send <- msg:
+					case client.send <- generatedMessage:
 					case <-ctx.Done():
 					}
 				}()
@@ -153,7 +168,7 @@ func (h *WebSocketHub) Send(ctx context.Context, opts ...SendOption) {
 			}
 
 			select {
-			case client.send <- msg:
+			case client.send <- generatedMessage:
 			case <-ctx.Done():
 			}
 		}

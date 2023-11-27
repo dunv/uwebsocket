@@ -1,7 +1,7 @@
 package uwebsocket
 
 type sendOptions struct {
-	messageFn func(clientGUID string, attrs *ClientAttributes) ([]byte, error)
+	messageFn func() ([]byte, error)
 	async     bool
 	filterFn  func(clientGUID string, attrs *ClientAttributes) bool
 }
@@ -11,13 +11,13 @@ type SendOption func(*sendOptions)
 // Specify the message to send
 func WithMessage(message []byte) SendOption {
 	return func(o *sendOptions) {
-		o.messageFn = func(string, *ClientAttributes) ([]byte, error) { return message, nil }
+		o.messageFn = func() ([]byte, error) { return message, nil }
 	}
 }
 
 // Specify the function to be called for generating
 // the massage if the filter function returns true
-func WithMessageFn(fn func(string, *ClientAttributes) ([]byte, error)) SendOption {
+func WithMessageFn(fn func() ([]byte, error)) SendOption {
 	return func(o *sendOptions) {
 		o.messageFn = fn
 	}
