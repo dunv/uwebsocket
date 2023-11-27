@@ -25,9 +25,9 @@ func TestMessageFilter(t *testing.T) {
 	defer cancel()
 	h, c1, c2 := createTestSetup(t, ctx)
 
-	h.Send(ctx, WithMessage(message1), WithMatchFilter(testClientKey, testClient1Value))
-	h.Send(ctx, WithMessage(message2), WithFlagFilter(testClientFlag))
-	h.Send(ctx, WithMessage(message3), WithClientFilter(testClientGUID1))
+	h.Send(WithMessage(message1), WithMatchFilter(testClientKey, testClient1Value))
+	h.Send(WithMessage(message2), WithFlagFilter(testClientFlag))
+	h.Send(WithMessage(message3), WithClientFilter(testClientGUID1))
 
 	// client 1 received all msgs
 	received, err := c1.readOne()
@@ -67,8 +67,8 @@ func TestMessageCache(t *testing.T) {
 		return []byte(message2), nil
 	}
 
-	h.Send(ctx, WithMessageFn(msg1Fn))
-	h.Send(ctx, WithMessageFn(msg2Fn), WithFilterFn(func(clientGUID string, attrs *ClientAttributes) bool {
+	h.Send(WithMessageFn(msg1Fn))
+	h.Send(WithMessageFn(msg2Fn), WithFilterFn(func(clientGUID string, attrs *ClientAttributes) bool {
 		return attrs.HasMatch(testClientKey, testClient2Value)
 	}))
 
@@ -100,11 +100,11 @@ func TestMessageBuffer(t *testing.T) {
 	defer cancel()
 	h, c1, _ := createTestSetup(t, ctx)
 
-	h.Send(ctx, WithMessage(message1), WithClientFilter(testClientGUID1))
-	h.Send(ctx, WithMessage(message1), WithClientFilter(testClientGUID1))
-	h.Send(ctx, WithMessage(message1), WithClientFilter(testClientGUID1))
-	h.Send(ctx, WithMessage(message1), WithClientFilter(testClientGUID1))
-	h.Send(ctx, WithMessage(message1), WithClientFilter(testClientGUID1))
+	h.Send(WithMessage(message1), WithClientFilter(testClientGUID1))
+	h.Send(WithMessage(message1), WithClientFilter(testClientGUID1))
+	h.Send(WithMessage(message1), WithClientFilter(testClientGUID1))
+	h.Send(WithMessage(message1), WithClientFilter(testClientGUID1))
+	h.Send(WithMessage(message1), WithClientFilter(testClientGUID1))
 
 	// client 1 received all msgs
 	received, err := c1.readOne()
@@ -122,7 +122,7 @@ func TestMessageBuffer(t *testing.T) {
 	require.Error(t, err)
 
 	// buffer is free again
-	h.Send(ctx, WithMessage(message2), WithClientFilter(testClientGUID1))
+	h.Send(WithMessage(message2), WithClientFilter(testClientGUID1))
 	received, err = c1.readOne()
 	require.NoError(t, err)
 	require.Equal(t, message2, received)

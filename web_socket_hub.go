@@ -119,7 +119,13 @@ func (h *WebSocketHub) CountClientsWithFilter(filterFunc func(clientGUID string,
 	return count
 }
 
-func (h *WebSocketHub) Send(ctx context.Context, opts ...SendOption) {
+// Pushes a message into the hub, there are no guarantees regarding message delivery
+//   - evaluates the filter, if no subscribers exist: return immediately
+//   - generates message once, and then caches it (if a messageFn is provided)
+//   - pumps the message into the send-channel of all matching clients
+//   - if the client-buffer is full, the message is discarded
+//   - the function always returns immediately
+func (h *WebSocketHub) Send(opts ...SendOption) {
 	sendOpts := &sendOptions{
 		filterFn: func(clientGUID string, attrs *ClientAttributes) bool { return true },
 	}
@@ -159,6 +165,7 @@ func (h *WebSocketHub) Send(ctx context.Context, opts ...SendOption) {
 			}
 
 			// send synchronously here, as messages are buffered in the client
+			// if the buffer is full: discard
 			select {
 			case client.SendChan() <- generatedMessage:
 			default:
