@@ -2,6 +2,7 @@ package uwebsocket
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -131,8 +132,9 @@ func TestMessageBuffer(t *testing.T) {
 	require.Equal(t, int64(2), h.discardedMessages)
 }
 
-func createTestSetup(t *testing.T, ctx context.Context) (*WebSocketHub, *WebSocketClientMock, *WebSocketClientMock) {
-	h := NewWebSocketHub(uhttp.NewUHTTP(), websocket.TextMessage, ctx)
+func createTestSetup(t *testing.T, ctx context.Context) (*webSocketHub, *WebSocketClientMock, *WebSocketClientMock) {
+	hInt := NewWebSocketHub(uhttp.NewUHTTP(), websocket.TextMessage, ctx)
+	h := reflect.ValueOf(hInt).Interface().(*webSocketHub)
 	go h.Run()
 	client1 := NewWebSocketClientMock(t, ctx, testClientGUID1,
 		NewClientAttributes().SetString(testClientKey, testClient1Value).SetBool(testClientFlag, true),

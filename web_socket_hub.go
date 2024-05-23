@@ -18,7 +18,14 @@ import (
 
 var ErrClientNotFound = errors.New("client not found")
 
-type WebSocketHub struct {
+type WebSocketHub interface {
+	Send(opts ...SendOption)
+	Run()
+	Handle(pattern string, handler Handler)
+	CountClientsWithFilter(filterFunc func(clientGUID string, attrs *ClientAttributes) bool) int
+}
+
+type webSocketHub struct {
 	clients          map[string]WebSocketClient
 	register         chan WebSocketClient
 	unregister       chan WebSocketClient
@@ -46,8 +53,8 @@ type WebSocketHub struct {
 	discardedMessages int64
 }
 
-func NewWebSocketHub(u *uhttp.UHTTP, messageType int, ctx context.Context) *WebSocketHub {
-	return &WebSocketHub{
+func NewWebSocketHub(u *uhttp.UHTTP, messageType int, ctx context.Context) WebSocketHub {
+	return &webSocketHub{
 		register:         make(chan WebSocketClient),
 		unregister:       make(chan WebSocketClient),
 		clients:          make(map[string]WebSocketClient),
@@ -65,7 +72,7 @@ func NewWebSocketHub(u *uhttp.UHTTP, messageType int, ctx context.Context) *WebS
 	}
 }
 
-func CreateHubAndRunInBackground(u *uhttp.UHTTP, messageType int, ctx context.Context) *WebSocketHub {
+func CreateHubAndRunInBackground(u *uhttp.UHTTP, messageType int, ctx context.Context) WebSocketHub {
 	hub := NewWebSocketHub(u, messageType, ctx)
 	go func() {
 		hub.Run()
@@ -73,7 +80,7 @@ func CreateHubAndRunInBackground(u *uhttp.UHTTP, messageType int, ctx context.Co
 	return hub
 }
 
-func (h *WebSocketHub) upgradeConnection(handler Handler, clientGuid string, clientAttributes *ClientAttributes, w http.ResponseWriter, r *http.Request, clientContext context.Context, clientContextCancel context.CancelFunc) error {
+func (h *webSocketHub) upgradeConnection(handler Handler, clientGuid string, clientAttributes *ClientAttributes, w http.ResponseWriter, r *http.Request, clientContext context.Context, clientContextCancel context.CancelFunc) error {
 	h.upgrader.CheckOrigin = func(r *http.Request) bool {
 		if h.u.CORS() == "*" {
 			return true
@@ -105,7 +112,7 @@ func (h *WebSocketHub) upgradeConnection(handler Handler, clientGuid string, cli
 	return nil
 }
 
-func (h *WebSocketHub) CountClientsWithFilter(filterFunc func(clientGUID string, attrs *ClientAttributes) bool) int {
+func (h *webSocketHub) CountClientsWithFilter(filterFunc func(clientGUID string, attrs *ClientAttributes) bool) int {
 	h.clientLock.Lock()
 	defer h.clientLock.Unlock()
 
@@ -125,7 +132,7 @@ func (h *WebSocketHub) CountClientsWithFilter(filterFunc func(clientGUID string,
 //   - pumps the message into the send-channel of all matching clients
 //   - if the client-buffer is full, the message is discarded
 //   - the function always returns immediately
-func (h *WebSocketHub) Send(opts ...SendOption) {
+func (h *webSocketHub) Send(opts ...SendOption) {
 	sendOpts := &sendOptions{
 		filterFn: func(clientGUID string, attrs *ClientAttributes) bool { return true },
 	}
@@ -176,7 +183,7 @@ func (h *WebSocketHub) Send(opts ...SendOption) {
 	}
 }
 
-func (h *WebSocketHub) Run() {
+func (h *webSocketHub) Run() {
 	for {
 		select {
 		case <-h.ctx.Done():
@@ -222,7 +229,7 @@ func (h *WebSocketHub) Run() {
 	}
 }
 
-func (h *WebSocketHub) Handle(pattern string, handler Handler) {
+func (h *webSocketHub) Handle(pattern string, handler Handler) {
 	h.u.ServeMux().Handle(pattern, handler.wsOpts.uhttpHandler.WsReady(h.u)(func(w http.ResponseWriter, r *http.Request) {
 		clientGuid := uuid.New().String()
 		attributes := NewClientAttributes()

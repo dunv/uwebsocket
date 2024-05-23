@@ -44,7 +44,7 @@ type WebSocketClient interface {
 
 // Client is a middleman between the websocket connection and the hub.
 type webSocketClient struct {
-	hub *WebSocketHub
+	hub *webSocketHub
 
 	// The websocket connection.
 	conn *websocket.Conn
