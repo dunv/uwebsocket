@@ -9,8 +9,16 @@ import (
 	"github.com/dunv/uhelpers"
 )
 
-var KEY_DOES_NOT_EXIST_ERR = errors.New("key does not exist")
-var KEY_HAS_WRONG_TYPE_ERR = errors.New("key has wrong type")
+var (
+	ErrKeyDoesNotExist = errors.New("key does not exist")
+	ErrKeyHasWrongType = errors.New("key has wrong type")
+)
+
+// Deprecated: use ErrKeyDoesNotExist.
+var KEY_DOES_NOT_EXIST_ERR = ErrKeyDoesNotExist //nolint:staticcheck // Retained for source compatibility.
+
+// Deprecated: use ErrKeyHasWrongType.
+var KEY_HAS_WRONG_TYPE_ERR = ErrKeyHasWrongType //nolint:staticcheck // Retained for source compatibility.
 
 type ClientAttributes struct {
 	attrs map[string]interface{}
@@ -32,9 +40,9 @@ func (c *ClientAttributes) GetString(key string) (string, error) {
 		if typed, ok := val.(*string); ok {
 			return *typed, nil
 		}
-		return "", KEY_HAS_WRONG_TYPE_ERR
+		return "", ErrKeyHasWrongType
 	}
-	return "", KEY_DOES_NOT_EXIST_ERR
+	return "", ErrKeyDoesNotExist
 }
 
 func (c *ClientAttributes) SetBool(key string, value bool) *ClientAttributes {
@@ -47,9 +55,9 @@ func (c *ClientAttributes) GetBool(key string) (bool, error) {
 		if typed, ok := val.(*bool); ok {
 			return *typed, nil
 		}
-		return false, KEY_HAS_WRONG_TYPE_ERR
+		return false, ErrKeyHasWrongType
 	}
-	return false, KEY_DOES_NOT_EXIST_ERR
+	return false, ErrKeyDoesNotExist
 }
 
 func (c *ClientAttributes) IsFlagSet(key string) bool {

@@ -7,15 +7,16 @@ type sendOptions struct {
 
 type SendOption func(*sendOptions)
 
-// Specify the message to send
+// WithMessage supplies immutable bytes shared by all matching clients. Do not
+// modify the slice after sending; network writes may still be pending.
 func WithMessage(message []byte) SendOption {
 	return func(o *sendOptions) {
 		o.messageFn = func() ([]byte, error) { return message, nil }
 	}
 }
 
-// Specify the function to be called for generating
-// the massage if the filter function returns true
+// WithMessageFn builds one immutable payload when at least one client matches.
+// The callback runs synchronously and is serialized against other Send calls.
 func WithMessageFn(fn func() ([]byte, error)) SendOption {
 	return func(o *sendOptions) {
 		o.messageFn = fn

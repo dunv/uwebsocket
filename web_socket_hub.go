@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 
 	"github.com/dunv/uhttp"
@@ -26,81 +25,57 @@ type WebSocketHub interface {
 }
 
 type webSocketHub struct {
-	clients          map[string]WebSocketClient
-	register         chan WebSocketClient
-	unregister       chan WebSocketClient
-	incomingMessages chan ClientMessage
+	clients    map[string]*hubClient
+	register   chan WebSocketClient
+	u          *uhttp.UHTTP
+	clientLock sync.Mutex
 
-	// map[clientGUID]chan ClientMessage
-	messageHandlers     map[string]func(ClientMessage)
-	messageHandlersLock *sync.Mutex
+	// Preserve callback serialization without holding the client registry lock.
+	sendLock       sync.Mutex
+	sendRecipients []*hubClient
 
-	u *uhttp.UHTTP
-
-	// lock list
-	clientLock *sync.Mutex
-
-	// websocket message-types (text or bytes for sending and receiving)
 	messageType int
+	upgrader    websocket.Upgrader
+	ctx         context.Context
 
-	// hold a configured upgrader
-	upgrader websocket.Upgrader
-
-	// this context can cancel the run-routine
-	ctx context.Context
-
-	// how many messages were discarded because the client-buffer was full
 	discardedMessages int64
 }
 
 func NewWebSocketHub(u *uhttp.UHTTP, messageType int, ctx context.Context) WebSocketHub {
 	return &webSocketHub{
-		register:         make(chan WebSocketClient),
-		unregister:       make(chan WebSocketClient),
-		clients:          make(map[string]WebSocketClient),
-		incomingMessages: make(chan ClientMessage),
-		u:                u,
-		clientLock:       &sync.Mutex{},
-		messageType:      messageType,
-		ctx:              ctx,
+		register:    make(chan WebSocketClient),
+		clients:     make(map[string]*hubClient),
+		u:           u,
+		messageType: messageType,
+		ctx:         ctx,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
 		},
-		messageHandlers:     make(map[string]func(ClientMessage)),
-		messageHandlersLock: &sync.Mutex{},
 	}
 }
 
 func CreateHubAndRunInBackground(u *uhttp.UHTTP, messageType int, ctx context.Context) WebSocketHub {
 	hub := NewWebSocketHub(u, messageType, ctx)
-	go func() {
-		hub.Run()
-	}()
+	go hub.Run()
 	return hub
 }
 
 func (h *webSocketHub) upgradeConnection(handler Handler, clientGuid string, clientAttributes *ClientAttributes, w http.ResponseWriter, r *http.Request, clientContext context.Context, clientContextCancel context.CancelFunc) error {
-	h.upgrader.CheckOrigin = func(r *http.Request) bool {
-		if h.u.CORS() == "*" {
-			return true
-		}
-		for _, host := range strings.Split(h.u.CORS(), ",") {
-			if host == r.Host {
-				return true
-			}
-		}
-		return false
-	}
-
-	conn, err := h.upgrader.Upgrade(w, r, nil)
+	upgrader := h.upgrader
+	upgrader.CheckOrigin = h.checkOrigin
+	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		return fmt.Errorf("Could not Upgrade connection (%s)", err)
+		return fmt.Errorf("could not upgrade connection: %w", err)
+	}
+	capacity := 256
+	if handler.wsOpts.initialSnapshot != nil {
+		capacity = handler.wsOpts.initialSnapshot.limits.MaxMessages
 	}
 	client := &webSocketClient{
 		hub:            h,
 		conn:           conn,
-		send:           make(chan []byte, 256),
+		send:           make(chan []byte, capacity),
 		clientGUID:     clientGuid,
 		attributes:     clientAttributes,
 		connectRequest: r,
@@ -108,31 +83,35 @@ func (h *webSocketHub) upgradeConnection(handler Handler, clientGuid string, cli
 		ctx:            clientContext,
 		ctxCancel:      clientContextCancel,
 	}
-	client.hub.register <- client
-	return nil
+	select {
+	case h.register <- client:
+		return nil
+	case <-clientContext.Done():
+		_ = conn.Close() // Best-effort teardown after cancellation.
+		return clientContext.Err()
+	}
 }
 
 func (h *webSocketHub) CountClientsWithFilter(filterFunc func(clientGUID string, attrs *ClientAttributes) bool) int {
 	h.clientLock.Lock()
 	defer h.clientLock.Unlock()
-
 	count := 0
-	for i := range h.clients {
-		client := h.clients[i]
-		if filterFunc(client.ClientGUID(), client.Attributes()) {
+	for _, client := range h.clients {
+		if filterFunc(client.guid, client.attrs) {
 			count++
 		}
 	}
 	return count
 }
 
-// Pushes a message into the hub, there are no guarantees regarding message delivery
-//   - evaluates the filter, if no subscribers exist: return immediately
-//   - generates message once, and then caches it (if a messageFn is provided)
-//   - pumps the message into the send-channel of all matching clients
-//   - if the client-buffer is full, the message is discarded
-//   - the function always returns immediately
+// Send selects recipients, then builds one shared message outside the client
+// registry lock. Calls and their builders are serialized; concurrent callers have
+// no defined acquisition order. Builders must return immutable bytes.
+// Legacy clients drop on overflow; WithInitialSnapshot clients disconnect instead.
+// Clients awaiting their explicit snapshot boundary are not live recipients.
 func (h *webSocketHub) Send(opts ...SendOption) {
+	h.sendLock.Lock()
+	defer h.sendLock.Unlock()
 	sendOpts := &sendOptions{
 		filterFn: func(clientGUID string, attrs *ClientAttributes) bool { return true },
 	}
@@ -145,41 +124,40 @@ func (h *webSocketHub) Send(opts ...SendOption) {
 	}
 
 	h.clientLock.Lock()
-	defer h.clientLock.Unlock()
-
-	// Cache generated message, this way the message-callback
-	// - is only called if there is at least one filter-match
-	// - is only called once for all clients
-	var generatedMessage []byte = nil
-	var generatedErr error
-
-	for i := range h.clients {
-		client := h.clients[i]
-		if sendOpts.filterFn(client.ClientGUID(), client.Attributes()) {
-			// if message generation already failed once, the error was logged and can be skipped this time around
-			if generatedErr != nil {
-				continue
-			}
-
-			// message was never generated -> do it here
-			if generatedMessage == nil {
-				generatedMessage, generatedErr = sendOpts.messageFn()
-				if generatedErr != nil {
-					h.u.Log().Errorf("uwebsocket: err generating msg: %w", generatedErr)
-					generatedMessage = []byte{}
-					continue
-				}
-			}
-
-			// send synchronously here, as messages are buffered in the client
-			// if the buffer is full: discard
-			select {
-			case client.SendChan() <- generatedMessage:
-			default:
-				h.discardedMessages++
-				h.u.Log().Errorf("uwebsocket: buffer for client %s full, skipping msg", client.ClientGUID())
-			}
+	recipients := h.sendRecipients[:0]
+	for _, client := range h.clients {
+		if client.snapshot != nil && client.snapshot.phase == snapshotWaiting {
+			continue
 		}
+		if sendOpts.filterFn(client.guid, client.attrs) {
+			recipients = append(recipients, client)
+		}
+	}
+	h.clientLock.Unlock()
+	defer func() {
+		clear(recipients)
+		h.sendRecipients = recipients[:0]
+	}()
+	if len(recipients) == 0 {
+		return
+	}
+	message, err := sendOpts.messageFn()
+	if err != nil {
+		h.u.Log().Errorf("uwebsocket: err generating msg: %v", err)
+	}
+	h.clientLock.Lock()
+	defer h.clientLock.Unlock()
+	for _, client := range recipients {
+		if !client.active {
+			continue
+		}
+		if err != nil {
+			if client.snapshot != nil {
+				h.removeClientLocked(client)
+			}
+			continue
+		}
+		h.enqueueLocked(client, message)
 	}
 }
 
@@ -189,43 +167,40 @@ func (h *webSocketHub) Run() {
 		case <-h.ctx.Done():
 			h.clientLock.Lock()
 			for _, client := range h.clients {
-				delete(h.clients, client.ClientGUID())
-				close(client.SendChan())
-				client.Cancel()
+				h.removeClientLocked(client)
 			}
 			h.clientLock.Unlock()
 			return
 		case client := <-h.register:
-			h.clientLock.Lock()
-			h.clients[client.ClientGUID()] = client
-			client.Run(h.ctx)
-			h.clientLock.Unlock()
-			if client.Handler().wsOpts.welcomeMessages != nil {
-				if welcomeMessages, err := (*client.Handler().wsOpts.welcomeMessages)(h, client.ClientGUID(), client.Attributes(), client.Request(), client.Ctx()); err == nil {
-					for _, msg := range welcomeMessages {
-						client.SendChan() <- msg
-					}
-				} else {
-					h.u.Log().Errorf("Could not generate welcomeMessage %v", err)
-				}
-			}
-		case client := <-h.unregister:
-			h.clientLock.Lock()
-			if _, ok := h.clients[client.ClientGUID()]; ok {
-				delete(h.clients, client.ClientGUID())
-				close(client.SendChan())
-				client.Cancel()
-			}
-			h.clientLock.Unlock()
-		case clientMessage := <-h.incomingMessages:
-			h.messageHandlersLock.Lock()
-			for clientGUID, handler := range h.messageHandlers {
-				if clientMessage.ClientGUID == clientGUID {
-					handler(clientMessage)
-				}
-			}
-			h.messageHandlersLock.Unlock()
+			h.registerClient(client)
 		}
+	}
+}
+
+func (h *webSocketHub) registerClient(client WebSocketClient) {
+	opts := client.Handler().wsOpts
+	registered := &hubClient{
+		client: client, guid: client.ClientGUID(), attrs: client.Attributes(),
+		send: client.SendChan(), ctx: client.Ctx(), active: true,
+	}
+	if opts.initialSnapshot != nil {
+		registered.snapshot = &snapshotDelivery{limits: opts.initialSnapshot.limits}
+	}
+	if opts.onIncomingMessage != nil {
+		registered.incoming = make(chan ClientMessage, opts.incomingMessageLimit)
+	}
+	h.clientLock.Lock()
+	h.clients[registered.guid] = registered
+	// Install all routing state before starting the socket reader.
+	client.Run(registered.ctx)
+	h.clientLock.Unlock()
+	if opts.onIncomingMessage != nil {
+		go h.runIncoming(registered, *opts.onIncomingMessage)
+	}
+	if opts.initialSnapshot != nil {
+		go h.startSnapshot(registered, opts.initialSnapshot)
+	} else if opts.welcomeMessages != nil {
+		go h.sendWelcome(registered, *opts.welcomeMessages)
 	}
 }
 
@@ -237,30 +212,22 @@ func (h *webSocketHub) Handle(pattern string, handler Handler) {
 		if handler.wsOpts.clientAttributes != nil {
 			attributes, err = (*handler.wsOpts.clientAttributes)(h, r)
 			if err != nil {
-				h.u.RenderError(w, r, fmt.Errorf("could not get required attributes (%s)", err))
+				h.u.RenderError(w, r, fmt.Errorf("could not get required attributes: %w", err))
 				return
 			}
 		}
 		clientContext, cancel := context.WithCancel(h.ctx)
 		err = h.upgradeConnection(handler, clientGuid, attributes, w, r, clientContext, cancel)
 		if err != nil {
-			h.u.RenderError(w, r, fmt.Errorf("could not upgrade connection (%s)", err))
+			// Gorilla already wrote upgrade errors, or the connection was hijacked.
+			// Never attempt another HTTP response after either outcome.
+			h.u.Log().Errorf("uwebsocket: connection upgrade failed: %v", err)
 			cancel()
 			return
 		}
-
-		if handler.wsOpts.onIncomingMessage != nil {
-			h.messageHandlersLock.Lock()
-			h.messageHandlers[clientGuid] = func(msg ClientMessage) {
-				(*handler.wsOpts.onIncomingMessage)(h, clientGuid, attributes, r, msg, clientContext)
-			}
-			h.messageHandlersLock.Unlock()
-		}
-
 		if handler.wsOpts.onConnect != nil {
 			(*handler.wsOpts.onConnect)(h, clientGuid, attributes, r, clientContext)
 		}
 	}))
-
 	h.u.Log().Infof("Registered WS at %s", pattern)
 }

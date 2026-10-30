@@ -11,15 +11,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var testClientKey = "testClientKey"
-var testClientFlag = "testClientKeyFlag"
-var testClientGUID1 = "testClientGUID1"
-var testClientGUID2 = "testClientGUID2"
-var testClient1Value = "testClientValue1"
-var testClient2Value = "testClientValue2"
-var message1 = []byte("message1")
-var message2 = []byte("message2")
-var message3 = []byte("message3")
+var (
+	testClientKey    = "testClientKey"
+	testClientFlag   = "testClientKeyFlag"
+	testClientGUID1  = "testClientGUID1"
+	testClientGUID2  = "testClientGUID2"
+	testClient1Value = "testClientValue1"
+	testClient2Value = "testClientValue2"
+	message1         = []byte("message1")
+	message2         = []byte("message2")
+	message3         = []byte("message3")
+)
 
 func TestMessageFilter(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -169,5 +171,4 @@ func createTestSetup(t *testing.T, ctx context.Context) (*webSocketHub, *WebSock
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-
 }

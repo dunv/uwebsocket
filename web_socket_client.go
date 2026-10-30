@@ -96,6 +96,9 @@ func (c *webSocketClient) Run(ctx context.Context) {
 }
 
 func (c *webSocketClient) handleError(err error) {
+	if c.ctx.Err() != nil {
+		return
+	}
 	if c.handler.wsOpts.onError != nil {
 		(*c.handler.wsOpts.onError)(c.hub, c.clientGUID, c.attributes, c.connectRequest, err, c.ctx)
 	} else {
@@ -112,8 +115,8 @@ func (c *webSocketClient) readPump(ctx context.Context) {
 	readContext, cancel := context.WithCancel(ctx)
 
 	defer func() {
-		c.hub.unregister <- c
-		c.conn.Close()
+		c.hub.unregisterClient(c)
+		_ = c.conn.Close() // Both pumps may close the socket during teardown.
 		cancel()
 	}()
 
@@ -134,15 +137,13 @@ func (c *webSocketClient) readPump(ctx context.Context) {
 	})
 
 	for {
-		if err := readContext.Err(); err != nil {
-			c.handleError(err)
+		if readContext.Err() != nil {
 			return
 		}
 
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				// some "unexpected" messages are actually ok
+			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				return
 			}
 			c.handleError(err)
@@ -152,13 +153,12 @@ func (c *webSocketClient) readPump(ctx context.Context) {
 
 		// support client side ping-pong via text-message
 		if bytes.Equal(message, []byte("PING")) {
-			c.send <- []byte(`PONG`)
+			c.hub.Send(WithClientFilter(c.clientGUID), WithMessage([]byte(`PONG`)))
 			continue
 		}
 
-		c.hub.incomingMessages <- ClientMessage{
-			ClientGUID: c.clientGUID,
-			Message:    message,
+		if !c.hub.dispatchIncoming(c, message) {
+			return
 		}
 	}
 }
@@ -174,17 +174,18 @@ func (c *webSocketClient) writePump(ctx context.Context) {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
-		c.conn.Close()
+		_ = c.conn.Close() // Both pumps may close the socket during teardown.
 		cancel()
 	}()
 
 	for {
-		if err := writeContext.Err(); err != nil {
-			c.handleError(err)
-			break
+		if writeContext.Err() != nil {
+			return
 		}
 
 		select {
+		case <-ctx.Done():
+			return
 		case message, ok := <-c.send:
 			err := c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err != nil {
@@ -201,6 +202,9 @@ func (c *webSocketClient) writePump(ctx context.Context) {
 				return
 			}
 
+			if c.handler.wsOpts.initialSnapshot != nil {
+				c.hub.messageDequeued(c, len(message))
+			}
 			w, err := c.conn.NextWriter(c.hub.messageType)
 			if err != nil {
 				c.handleError(err)
